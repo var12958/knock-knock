@@ -1,0 +1,1619 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Code coverage report for contracts\KnockKnockMailbox.sol</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+<body>
+<div class='wrapper'>
+  <div class='pad1'>
+    <h1>
+      <a href="../index.html">all files</a> / <a href="index.html">contracts/</a> KnockKnockMailbox.sol
+    </h1>
+    <div class='clearfix'>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">95.59% </span>
+        <span class="quiet">Statements</span>
+        <span class='fraction'>65/68</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">79.17% </span>
+        <span class="quiet">Branches</span>
+        <span class='fraction'>57/72</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">93.75% </span>
+        <span class="quiet">Functions</span>
+        <span class='fraction'>15/16</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">93% </span>
+        <span class="quiet">Lines</span>
+        <span class='fraction'>93/100</span>
+      </div>
+    </div>
+  </div>
+  <div class='status-line high'></div>
+<pre><table class="coverage">
+<tr><td class="line-count quiet">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
+134
+135
+136
+137
+138
+139
+140
+141
+142
+143
+144
+145
+146
+147
+148
+149
+150
+151
+152
+153
+154
+155
+156
+157
+158
+159
+160
+161
+162
+163
+164
+165
+166
+167
+168
+169
+170
+171
+172
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230
+231
+232
+233
+234
+235
+236
+237
+238
+239
+240
+241
+242
+243
+244
+245
+246
+247
+248
+249
+250
+251
+252
+253
+254
+255
+256
+257
+258
+259
+260
+261
+262
+263
+264
+265
+266
+267
+268
+269
+270
+271
+272
+273
+274
+275
+276
+277
+278
+279
+280
+281
+282
+283
+284
+285
+286
+287
+288
+289
+290
+291
+292
+293
+294
+295
+296
+297
+298
+299
+300
+301
+302
+303
+304
+305
+306
+307
+308
+309
+310
+311
+312
+313
+314
+315
+316
+317
+318
+319
+320
+321
+322
+323
+324
+325
+326
+327
+328
+329
+330
+331
+332
+333
+334
+335
+336
+337
+338
+339
+340
+341
+342
+343
+344
+345
+346
+347
+348
+349
+350
+351
+352
+353
+354
+355
+356
+357
+358
+359
+360
+361
+362
+363
+364
+365
+366
+367
+368
+369
+370
+371
+372
+373
+374
+375
+376
+377
+378
+379
+380
+381
+382
+383
+384
+385
+386
+387
+388
+389
+390
+391
+392
+393
+394
+395
+396
+397
+398
+399
+400
+401
+402
+403
+404
+405
+406
+407
+408
+409
+410
+411
+412
+413
+414
+415
+416
+417
+418
+419
+420
+421
+422
+423
+424
+425
+426
+427
+428
+429
+430
+431
+432
+433
+434
+435
+436
+437
+438
+439
+440
+441
+442
+443
+444
+445
+446
+447
+448
+449
+450
+451
+452
+453
+454
+455
+456
+457
+458
+459
+460
+461
+462
+463
+464
+465
+466
+467
+468
+469
+470
+471
+472
+473
+474
+475
+476
+477
+478
+479
+480
+481
+482
+483
+484
+485
+486
+487
+488
+489
+490
+491
+492
+493
+494
+495
+496
+497
+498
+499
+500
+501
+502
+503
+504
+505
+506
+507
+508
+509
+510
+511
+512
+513
+514
+515
+516
+517
+518
+519</td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">16×</span>
+<span class="cline-any cline-yes">16×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">14×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">135×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9×</span>
+<span class="cline-any cline-yes">8×</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9×</span>
+<span class="cline-any cline-yes">9×</span>
+<span class="cline-any cline-yes">9×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">139×</span>
+<span class="cline-any cline-yes">138×</span>
+<span class="cline-any cline-yes">137×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">136×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">135×</span>
+<span class="cline-any cline-yes">135×</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">134×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8×</span>
+<span class="cline-any cline-yes">8×</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">134×</span>
+<span class="cline-any cline-yes">134×</span>
+<span class="cline-any cline-yes">5056×</span>
+<span class="cline-any cline-yes">5056×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5061×</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5061×</span>
+<span class="cline-any cline-yes">5061×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-yes">133×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-yes">11×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+&nbsp;
+// OpenZeppelin utilities for access control, reentrancy protection, and signature verification.
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+&nbsp;
+/**
+ * @title KnockKnockMailbox
+ * @notice A privacy-first on-chain mailbox for Web3 messaging on Flare.
+ * @dev Users send encrypted chat previews to receivers. Receivers can accept
+ *      (which reveals the sender and clears the request from the pending list)
+ *      or reject (which removes the request from active storage). Because all
+ *      blockchain data is public by nature, this contract can hide the active
+ *      state but cannot erase historical events or archive data. For stronger
+ *      privacy, store only a content hash on-chain and keep the ciphertext off-chain.
+ */
+contract KnockKnockMailbox is Ownable, ReentrancyGuard {
+    using ECDSA for bytes32;
+&nbsp;
+    /// @notice Default lifetime of a chat request before it expires.
+    uint256 public constant DEFAULT_EXPIRATION = 7 days;
+&nbsp;
+    /// @notice Minimum allowed expiration duration for new requests.
+    uint256 public constant MIN_EXPIRATION = 1 hours;
+&nbsp;
+    /// @notice Maximum allowed expiration duration for new requests.
+    uint256 public constant MAX_EXPIRATION = 90 days;
+&nbsp;
+    /// @notice Maximum number of pending (unexpired, unaccepted) requests a single receiver can have.
+    uint256 public constant MAX_PENDING_PER_RECEIVER = 100;
+&nbsp;
+    /// @notice Maximum number of pending requests returned in a single `getPendingRequests` call.
+    uint256 public constant MAX_PAGE_SIZE = 20;
+&nbsp;
+    /// @notice Maximum length of the encrypted preview message in bytes.
+    uint256 public constant MAX_PREVIEW_LENGTH = 1024;
+&nbsp;
+    /// @notice Current expiration duration used for new requests.
+    /// @dev The owner can adjust this value within [MIN_EXPIRATION, MAX_EXPIRATION].
+    uint256 public requestExpirationDuration = DEFAULT_EXPIRATION;
+&nbsp;
+    /// @notice Monotonically increasing ID for the next request.
+    /// @dev Request IDs start at 1 so that 0 can be used as a sentinel for
+    ///      "no active request" in `senderReceiverRequestId`.
+    uint256 public nextRequestId = 1;
+&nbsp;
+    /**
+     * @notice A single chat request between two addresses.
+     * @param sender The address that created the request.
+     * @param receiver The address that receives the request.
+     * @param encryptedPreviewMessage Off-chain-encrypted preview message (opaque to the contract).
+     * @param isVerifiedHuman Whether the sender claims to have passed a human verification check.
+     * @param isOldEnoughWallet Whether the sender claims their wallet meets an age heuristic.
+     * @param accepted Whether the receiver has accepted the request.
+     * @param isRevealed Whether the sender's identity is revealed to the receiver.
+     * @param expirationTime Unix timestamp after which the request is considered expired.
+     */
+    struct ChatRequest {
+        address sender;
+        address receiver;
+        string encryptedPreviewMessage;
+        bool isVerifiedHuman;
+        bool isOldEnoughWallet;
+        bool accepted;
+        bool isRevealed;
+        uint256 expirationTime;
+    }
+&nbsp;
+    /// @notice All chat requests indexed by their stable request ID.
+    mapping(uint256 =&gt; ChatRequest) public requests;
+&nbsp;
+    /// @notice Whether a given request ID currently exists in active storage.
+    mapping(uint256 =&gt; bool) public requestExists;
+&nbsp;
+    /// @notice Maps a receiver address to the IDs of requests targeting them.
+    /// @dev This array may contain accepted or expired IDs; getters filter them out.
+    mapping(address =&gt; uint256[]) private receiverToRequestIds;
+&nbsp;
+    /// @notice Maps a receiver + request ID to its 1-based index in `receiverToRequestIds`.
+    /// @dev A value of 0 means the request ID is not currently in the receiver's list.
+    mapping(address =&gt; mapping(uint256 =&gt; uint256)) private receiverRequestIndex;
+&nbsp;
+    /// @notice Maps a sender-receiver pair to the active request ID, or 0 if none.
+    /// @dev This is used to enforce one active request per pair and to detect expired requests.
+    mapping(address =&gt; mapping(address =&gt; uint256)) public senderReceiverRequestId;
+&nbsp;
+    /// @notice Address of the trusted TEE signer that attests to verification results.
+    /// @dev In production this should be derived from on-chain attestation/registry data,
+    ///      not set manually by the owner.
+    address public teeSigner;
+&nbsp;
+    /// @notice Tracks verification signatures that have already been consumed.
+    /// @dev Prevents replay of a valid TEE attestation across multiple requests.
+    mapping(bytes =&gt; bool) public usedSignatures;
+&nbsp;
+    /// @notice Emitted when a new chat request is sent.
+    /// @dev Events are permanent on-chain history and cannot be deleted.
+    event RequestSent(
+        uint256 indexed requestId,
+        address indexed sender,
+        address indexed receiver
+    );
+&nbsp;
+    /// @notice Emitted when a receiver accepts a chat request.
+    event RequestAccepted(uint256 indexed requestId, address indexed receiver);
+&nbsp;
+    /// @notice Emitted when a receiver rejects a chat request.
+    event RequestRejected(uint256 indexed requestId, address indexed receiver);
+&nbsp;
+    /// @notice Emitted when the owner changes the request expiration duration.
+    event ExpirationDurationUpdated(uint256 newDuration);
+&nbsp;
+    /// @notice Emitted when an expired request is automatically cleaned up by a new send.
+    event ExpiredRequestCleaned(uint256 indexed requestId, address indexed sender, address indexed receiver);
+&nbsp;
+    /// @notice Emitted when the owner updates the trusted TEE signer address.
+    event TEESignerUpdated(address indexed newSigner);
+&nbsp;
+    /**
+     * @notice Ensures the caller is the receiver of the given request.
+     * @param _requestId The ID of the request to check.
+     */
+    modifier onlyReceiver(uint256 _requestId) {
+        <span class="missing-if-branch" title="else path not taken" >E</span>require(requestExists[_requestId], "Request does not exist");
+        require(
+            msg.sender == requests[_requestId].receiver,
+            "Only the receiver can perform this action"
+        );
+        _;
+    }
+&nbsp;
+    /**
+     * @notice Contract constructor. Passes the deployer as the initial owner.
+     */
+    constructor() Ownable(msg.sender) {}
+&nbsp;
+    /**
+     * @notice Send a new chat request to a receiver.
+     * @param _receiver The address that should receive the request.
+     * @param _encryptedPreviewMessage Off-chain-encrypted preview message.
+     * @param _isVerifiedHuman Whether the sender claims to be a verified human.
+     * @param _isOldEnoughWallet Whether the sender claims their wallet is old enough.
+     * @return requestId The stable ID of the newly created request.
+     * @dev Expiration time is computed as `block.timestamp + requestExpirationDuration`.
+     *      To prevent spam and DoS:
+     *      - each sender-receiver pair can have at most one active (unaccepted, unexpired) request,
+     *      - each receiver is capped at MAX_PENDING_PER_RECEIVER pending requests,
+     *      - the preview message length is capped at MAX_PREVIEW_LENGTH bytes.
+     *      If an existing request for the pair has expired, it is automatically cleaned up
+     *      so the sender is not permanently blocked.
+     *      The booleans are self-reported claims; the contract does not verify them.
+     */
+    function sendRequest(
+        address _receiver,
+        string memory _encryptedPreviewMessage,
+        bool _isVerifiedHuman,
+        bool _isOldEnoughWallet
+    ) external <span class="missing-if-branch" title="else path not taken" >E</span>nonReentrant returns (uint256 requestId) {
+        requestId = _createRequest(
+            _receiver,
+            _encryptedPreviewMessage,
+            _isVerifiedHuman,
+            _isOldEnoughWallet
+        );
+    }
+&nbsp;
+    /**
+     * @notice Send a new chat request with a TEE attestation for both verification checks.
+     * @param _receiver The address that should receive the request.
+     * @param _encryptedPreviewMessage Off-chain-encrypted preview message.
+     * @param _isVerifiedHuman TEE-attested humanity flag.
+     * @param _isOldEnoughWallet TEE-attested wallet-age flag.
+     * @param _deadline Unix timestamp after which the verification proof expires.
+     * @param _requestHash Hash binding this proof to the receiver, preview, and deadline.
+     * @param _teeSignature ECDSA signature from the trusted TEE signer over
+     *        `keccak256(abi.encodePacked(chainId, mailbox, msg.sender, flags, requestHash))`.
+     * @return requestId The stable ID of the newly created request.
+     * @dev The signature binds the attestation to `msg.sender`, this contract address, and
+     *      the current chain so a proof cannot be replayed across wallets, contracts, or chains.
+     *      The wallet address itself is not emitted in the public output; it is only used as
+     *      the transaction origin and in the signed hash verification.
+     */
+    function sendRequestWithProof(
+        address _receiver,
+        string memory _encryptedPreviewMessage,
+        bool _isVerifiedHuman,
+        bool _isOldEnoughWallet,
+        uint256 _deadline,
+        bytes32 _requestHash,
+        bytes memory _teeSignature
+    ) external <span class="missing-if-branch" title="else path not taken" >E</span>nonReentrant returns (uint256 requestId) {
+        require(teeSigner != address(0), "TEE signer not configured");
+        require(!usedSignatures[_teeSignature], "Proof already used");
+        require(
+            block.timestamp &lt;= _deadline,
+            "Proof deadline expired"
+        );
+&nbsp;
+        bytes32 expectedHash = keccak256(
+            abi.encodePacked(_receiver, _encryptedPreviewMessage, _deadline)
+        );
+        require(expectedHash == _requestHash, "Request hash mismatch");
+&nbsp;
+        bytes32 signedHash = keccak256(
+            abi.encodePacked(
+                block.chainid,
+                address(this),
+                msg.sender,
+                _isVerifiedHuman,
+                _isOldEnoughWallet,
+                _requestHash
+            )
+        );
+        address signer = signedHash.recover(_teeSignature);
+        require(signer == teeSigner, "Invalid TEE signature");
+&nbsp;
+        usedSignatures[_teeSignature] = true;
+        requestId = _createRequest(
+            _receiver,
+            _encryptedPreviewMessage,
+            _isVerifiedHuman,
+            _isOldEnoughWallet
+        );
+    }
+&nbsp;
+    /**
+     * @notice Owner-only function to set the trusted TEE signer address.
+     * @param _newSigner The address derived from the TEE attestation/public key.
+     * @dev In a production deployment this should be initialized from the Flare
+     *      TEE registry/attestation rather than passed by the owner.
+     */
+    function setTEESigner(address _newSigner) external onlyOwner {
+        <span class="missing-if-branch" title="else path not taken" >E</span>require(_newSigner != address(0), "Signer cannot be the zero address");
+        teeSigner = _newSigner;
+        emit TEESignerUpdated(_newSigner);
+    }
+&nbsp;
+    /**
+     * @notice Internal helper that creates a chat request after all checks have passed.
+     * @param _receiver The address that should receive the request.
+     * @param _encryptedPreviewMessage Off-chain-encrypted preview message.
+     * @param _isVerifiedHuman Whether the sender is a verified human.
+     * @param _isOldEnoughWallet Whether the sender's wallet is old enough.
+     * @return requestId The stable ID of the newly created request.
+     */
+    function _createRequest(
+        address _receiver,
+        string memory _encryptedPreviewMessage,
+        bool _isVerifiedHuman,
+        bool _isOldEnoughWallet
+    ) internal returns (uint256 requestId) {
+        require(_receiver != address(0), "Receiver cannot be the zero address");
+        require(_receiver != msg.sender, "Cannot send a request to yourself");
+        require(
+            bytes(_encryptedPreviewMessage).length &gt; 0,
+            "Preview message cannot be empty"
+        );
+        require(
+            bytes(_encryptedPreviewMessage).length &lt;= MAX_PREVIEW_LENGTH,
+            "Preview message too long"
+        );
+&nbsp;
+        // If the pair already has an active request, handle it.
+        uint256 existingId = senderReceiverRequestId[msg.sender][_receiver];
+        if (existingId &gt; 0 &amp;&amp; requestExists[existingId]) {
+            ChatRequest storage existing = requests[existingId];
+            <span class="missing-if-branch" title="if path not taken" >I</span>if (block.timestamp &gt; existing.expirationTime || existing.accepted) {
+                // Expired or already-accepted requests are cleaned up automatically.
+<span class="cstat-no" title="statement not covered" >                _cleanupRequest(existingId)</span>;
+            } else {
+                revert("Active request already exists for this sender-receiver pair");
+            }
+        }
+&nbsp;
+        require(
+            _pendingCount(_receiver) &lt; MAX_PENDING_PER_RECEIVER,
+            "Receiver has too many pending requests"
+        );
+&nbsp;
+        requestId = nextRequestId;
+        nextRequestId++;
+&nbsp;
+        requests[requestId] = ChatRequest({
+            sender: msg.sender,
+            receiver: _receiver,
+            encryptedPreviewMessage: _encryptedPreviewMessage,
+            isVerifiedHuman: _isVerifiedHuman,
+            isOldEnoughWallet: _isOldEnoughWallet,
+            accepted: false,
+            isRevealed: false,
+            expirationTime: block.timestamp + requestExpirationDuration
+        });
+&nbsp;
+        requestExists[requestId] = true;
+        senderReceiverRequestId[msg.sender][_receiver] = requestId;
+        _addReceiverRequestId(_receiver, requestId);
+&nbsp;
+        emit RequestSent(requestId, msg.sender, _receiver);
+    }
+&nbsp;
+    /**
+     * @notice Accept a pending chat request.
+     * @param _requestId The ID of the request to accept.
+     * @dev Only the receiver may accept. Sets `accepted` and `isRevealed` to true,
+     *      marks the sender-receiver pair as no longer active, removes the request
+     *      from the receiver's pending list, and deletes the encrypted preview from
+     *      storage to reduce the on-chain data footprint.
+     */
+    function acceptRequest(uint256 _requestId)
+        external
+        onlyReceiver(_requestId)
+        <span class="missing-if-branch" title="else path not taken" >E</span>nonReentrant
+    {
+        ChatRequest storage request = requests[_requestId];
+        require(!request.accepted, "Request has already been accepted");
+        require(
+            block.timestamp &lt;= request.expirationTime,
+            "Request has expired"
+        );
+&nbsp;
+        request.accepted = true;
+        request.isRevealed = true;
+&nbsp;
+        // Clear the encrypted preview to reduce long-term storage of ciphertext.
+        delete request.encryptedPreviewMessage;
+&nbsp;
+        senderReceiverRequestId[request.sender][request.receiver] = 0;
+        _removeReceiverRequestId(request.receiver, _requestId);
+&nbsp;
+        emit RequestAccepted(_requestId, msg.sender);
+    }
+&nbsp;
+    /**
+     * @notice Reject and remove a chat request from active storage.
+     * @param _requestId The ID of the request to reject.
+     * @dev Only the receiver may reject. Clears the request struct and removes it
+     *      from the receiver's pending list. Because blockchain events and archive
+     *      data are permanent, this hides the active state but cannot fully erase
+     *      historical evidence that the request existed.
+     */
+    function rejectRequest(uint256 _requestId)
+        external
+        onlyReceiver(_requestId)
+        <span class="missing-if-branch" title="else path not taken" >E</span>nonReentrant
+    {
+        ChatRequest storage request = requests[_requestId];
+        require(
+            !request.accepted,
+            "Cannot reject an already accepted request"
+        );
+&nbsp;
+        _cleanupRequest(_requestId);
+&nbsp;
+        emit RequestRejected(_requestId, msg.sender);
+    }
+&nbsp;
+    /**
+     * @notice Return a paginated list of pending, unexpired, unaccepted requests for a receiver.
+     * @param _receiver The address whose pending requests should be listed.
+     * @param _offset The number of pending requests to skip (for pagination).
+     * @param _limit The maximum number of pending requests to return (capped at MAX_PAGE_SIZE).
+     * @return pendingRequests Array of pending `ChatRequest` structs.
+     * @dev Only the receiver may call this function. Filtering happens in memory
+     *      inside this view function. Pagination prevents oversized RPC responses.
+     */
+    function getPendingRequests(address _receiver, uint256 _offset, uint256 _limit)
+        external
+        view
+        returns (ChatRequest[] memory pendingRequests)
+    {
+        require(
+            msg.sender == _receiver,
+            "Only the receiver can view their pending requests"
+        );
+&nbsp;
+        uint256[] storage receiverRequestIds = receiverToRequestIds[_receiver];
+&nbsp;
+        // Collect pending IDs up to the requested page size.
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (_limit &gt; MAX_PAGE_SIZE) {
+            _limit = MAX_PAGE_SIZE;
+        }
+&nbsp;
+        uint256[] memory pendingIds = new uint256[](_limit);
+        uint256 pendingFound = 0;
+        uint256 skipped = 0;
+        for (uint256 i = 0; i &lt; receiverRequestIds.length; i++) {
+            uint256 requestId = receiverRequestIds[i];
+            if (!_isPending(requestId)) {
+                continue;
+            }
+&nbsp;
+            <span class="missing-if-branch" title="if path not taken" >I</span>if (skipped &lt; _offset) {
+                skipped++;
+                continue;
+            }
+&nbsp;
+            pendingIds[pendingFound] = requestId;
+            pendingFound++;
+            <span class="missing-if-branch" title="if path not taken" >I</span>if (pendingFound == _limit) {
+                break;
+            }
+        }
+&nbsp;
+        pendingRequests = new ChatRequest[](pendingFound);
+        for (uint256 i = 0; i &lt; pendingFound; i++) {
+            pendingRequests[i] = requests[pendingIds[i]];
+        }
+    }
+&nbsp;
+    /**
+     * @notice Owner-only function to update the default request expiration duration.
+     * @param _newDuration The new duration in seconds.
+     * @dev Only the contract owner can change this value, and it must remain
+     *      within the [MIN_EXPIRATION, MAX_EXPIRATION] range.
+     */
+    function setRequestExpirationDuration(uint256 _newDuration)
+        external
+        onlyOwner
+    {
+        require(
+            _newDuration &gt;= MIN_EXPIRATION &amp;&amp; _newDuration &lt;= MAX_EXPIRATION,
+            "Duration out of bounds"
+        );
+        requestExpirationDuration = _newDuration;
+        emit ExpirationDurationUpdated(_newDuration);
+    }
+&nbsp;
+    /**
+     * @notice Get the total number of requests ever created (including rejected ones).
+     * @return The current value of `nextRequestId`.
+     */
+<span class="fstat-no" title="function not covered" >    function getTotalRequestCount() external view returns (uint256) {</span>
+<span class="cstat-no" title="statement not covered" >        return nextRequestId;</span>
+    }
+&nbsp;
+    /**
+     * @notice Internal helper to count actually pending requests for a receiver.
+     * @param _receiver The receiver whose pending requests should be counted.
+     * @return count The number of unexpired, unaccepted, existing requests.
+     */
+    function _pendingCount(address _receiver) internal view returns (uint256 count) {
+        uint256[] storage receiverRequestIds = receiverToRequestIds[_receiver];
+        for (uint256 i = 0; i &lt; receiverRequestIds.length; i++) {
+            <span class="missing-if-branch" title="else path not taken" >E</span>if (_isPending(receiverRequestIds[i])) {
+                count++;
+            }
+        }
+    }
+&nbsp;
+    /**
+     * @notice Internal helper to determine whether a request is still pending.
+     * @param _requestId The ID of the request to check.
+     * @return True if the request exists, is unaccepted, and has not expired.
+     */
+    function _isPending(uint256 _requestId) internal view returns (bool) {
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (!requestExists[_requestId]) {
+<span class="cstat-no" title="statement not covered" >            return false;</span>
+        }
+        ChatRequest storage request = requests[_requestId];
+        return
+            !request.accepted &amp;&amp;
+            block.timestamp &lt;= request.expirationTime;
+    }
+&nbsp;
+    /**
+     * @notice Internal helper to add a request ID to a receiver's list.
+     * @param _receiver The receiver whose list should be updated.
+     * @param _requestId The request ID to append.
+     * @dev Stores the 1-based index to enable O(1) removal later.
+     */
+    function _addReceiverRequestId(address _receiver, uint256 _requestId) internal {
+        receiverToRequestIds[_receiver].push(_requestId);
+        receiverRequestIndex[_receiver][_requestId] =
+            receiverToRequestIds[_receiver].length;
+    }
+&nbsp;
+    /**
+     * @notice Internal helper to remove a request ID from a receiver's list.
+     * @param _receiver The receiver whose list should be updated.
+     * @param _requestId The request ID to remove.
+     * @dev Uses swap-and-pop with an index mapping for O(1) removal.
+     */
+    function _removeReceiverRequestId(address _receiver, uint256 _requestId) internal {
+        uint256 indexPlusOne = receiverRequestIndex[_receiver][_requestId];
+        <span class="missing-if-branch" title="else path not taken" >E</span>require(indexPlusOne &gt; 0, "Request not in receiver list");
+&nbsp;
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = receiverToRequestIds[_receiver].length - 1;
+        uint256 lastRequestId = receiverToRequestIds[_receiver][lastIndex];
+&nbsp;
+        receiverToRequestIds[_receiver][index] = lastRequestId;
+        receiverRequestIndex[_receiver][lastRequestId] = indexPlusOne;
+        receiverToRequestIds[_receiver].pop();
+        delete receiverRequestIndex[_receiver][_requestId];
+    }
+&nbsp;
+    /**
+     * @notice Internal helper to fully remove a request from active storage.
+     * @param _requestId The ID of the request to clean up.
+     * @dev Clears the request struct, existence flag, sender-receiver mapping,
+     *      and removes the ID from the receiver's list.
+     */
+    function _cleanupRequest(uint256 _requestId) internal {
+        ChatRequest storage request = requests[_requestId];
+        address sender = request.sender;
+        address receiver = request.receiver;
+&nbsp;
+        senderReceiverRequestId[sender][receiver] = 0;
+        _removeReceiverRequestId(receiver, _requestId);
+&nbsp;
+        delete requests[_requestId];
+        requestExists[_requestId] = false;
+&nbsp;
+        emit ExpiredRequestCleaned(_requestId, sender, receiver);
+    }
+}
+&nbsp;</pre></td></tr>
+</table></pre>
+<div class='push'></div><!-- for sticky footer -->
+</div><!-- /wrapper -->
+<div class='footer quiet pad2 space-top1 center small'>
+  Code coverage
+  generated by <a href="http://istanbul-js.org/" target="_blank">istanbul</a> at Thu Jul 23 2026 16:48:05 GMT+0530 (India Standard Time)
+</div>
+</div>
+<script src="../prettify.js"></script>
+<script>
+window.onload = function () {
+        if (typeof prettyPrint === 'function') {
+            prettyPrint();
+        }
+};
+</script>
+<script src="../sorter.js"></script>
+</body>
+</html>

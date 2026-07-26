@@ -1,0 +1,4 @@
+{
+  "/onboard/page": "app/onboard/page.js",
+  "/send/page": "app/send/page.js"
+}

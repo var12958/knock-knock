@@ -1,0 +1,26 @@
+{
+  "name": "__",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile",
+    "deploy:coston2": "hardhat run scripts/deploy.js --network coston2",
+    "deploy:local": "hardhat run scripts/deploy.js --network hardhat",
+    "deploy:fcc:coston2": "hardhat run scripts/deployFCC.js --network coston2",
+    "deploy:fcc:local": "hardhat run scripts/deployFCC.js --network hardhat"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^17.4.2",
+    "hardhat": "^2.29.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1"
+  }
+}
