@@ -55,23 +55,9 @@ function getFirebaseApp() {
 export const firebaseApp = getFirebaseApp();
 export const realtimeDb = firebaseApp ? getDatabase(firebaseApp) : null;
 
-if (
-  firebaseApp &&
-  realtimeDb &&
-  process.env.NODE_ENV === "development" &&
-  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_EMULATOR
-) {
-  const parsed = parseEmulatorUrl(process.env.NEXT_PUBLIC_FIREBASE_DATABASE_EMULATOR);
-  if (parsed) {
-    const { host, port } = parsed;
-    if (typeof console !== "undefined") {
-      console.log(`[Firebase] Connecting Database emulator at ${host}:${port}`);
-    }
-    connectDatabaseEmulator(realtimeDb, host, port);
-  } else if (typeof console !== "undefined") {
-    console.warn(
-      "NEXT_PUBLIC_FIREBASE_DATABASE_EMULATOR is set but could not be parsed:",
-      process.env.NEXT_PUBLIC_FIREBASE_DATABASE_EMULATOR,
-    );
+if (firebaseApp && realtimeDb && process.env.NODE_ENV === "development") {
+  if (typeof console !== "undefined") {
+    console.log("[Firebase] Connecting Database emulator at 127.0.0.1:9000");
   }
+  connectDatabaseEmulator(realtimeDb, "127.0.0.1", 9000);
 }

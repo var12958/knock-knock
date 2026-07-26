@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ethers, Interface } from "ethers";
 import { useWeb3 } from "@/context/Web3Context";
 import {
@@ -33,17 +34,24 @@ type SendStatus =
   | { stage: "submitting" }
   | { stage: "done"; txHash: string };
 
-export default function SendRequestForm() {
+interface SendRequestFormProps {
+  /** Called after the on-chain request is successfully mined. */
+  onMessageSent?: () => void;
+}
+
+export default function SendRequestForm({ onMessageSent }: SendRequestFormProps) {
   const { signer, address, chainId } = useWeb3();
   const [receiver, setReceiver] = useState("");
   const [preview, setPreview] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<SendStatus>({ stage: "idle" });
 
   const isMountedRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
@@ -67,21 +75,30 @@ export default function SendRequestForm() {
     if (isMountedRef.current) setIsSending(next);
   }
 
+  function setIsSuccessIfMounted(next: boolean) {
+    if (isMountedRef.current) setIsSuccess(next);
+  }
+
   const isConnected = Boolean(signer && address);
   const isWrongNetwork = chainId !== null && chainId !== COSTON2_CHAIN_ID;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    console.log("[SendRequestForm] handleSubmit started");
+
     setErrorIfMounted(null);
     setTxHashIfMounted(null);
+    setIsSuccessIfMounted(false);
     setStatusIfMounted({ stage: "idle" });
 
     if (!signer || !address) {
+      console.log("[SendRequestForm] no signer/address");
       setErrorIfMounted("Please connect your wallet first.");
       return;
     }
 
     if (isWrongNetwork) {
+      console.log("[SendRequestForm] wrong network", chainId);
       setErrorIfMounted("Please switch to the Flare Coston2 network.");
       return;
     }
@@ -107,7 +124,9 @@ export default function SendRequestForm() {
     }
 
     if (ethers.toUtf8Bytes(preview).length > MAX_PREVIEW_BYTES) {
-      setError(`Preview message is too long (max ${MAX_PREVIEW_BYTES} bytes).`);
+      setErrorIfMounted(
+        `Preview message is too long (max ${MAX_PREVIEW_BYTES} bytes).`
+      );
       return;
     }
 
@@ -124,14 +143,12 @@ export default function SendRequestForm() {
     abortControllerRef.current = abortController;
 
     try {
-      // 1) Build the private instruction payload that the verifier contract will
-      //    post to the TEE. We must reproduce it exactly so the local/operator
-      //    proxy can return a matching signature.
       const provider = signer.provider;
       if (!provider) {
         throw new Error("Wallet provider is not available.");
       }
 
+      console.log("[SendRequestForm] fetching latest block...");
       const latestBlock = await provider.getBlock("latest");
       if (!latestBlock) {
         throw new Error("Unable to fetch the latest block.");
@@ -145,10 +162,9 @@ export default function SendRequestForm() {
         ["address", "address", "string", "uint256", "uint256", "address"],
         [address, receiver, encodedPreview, deadline, BigInt(COSTON2_CHAIN_ID), MAILBOX_ADDRESS]
       );
+      console.log("[SendRequestForm] encoded originalMessage:", originalMessage);
 
-      // 2) Submit the verification request on-chain. The verifier emits
-      //    VerificationRequested(receiver, requestHash, teeId) and posts the
-      //    private payload to the Flare TEE network.
+      console.log("[SendRequestForm] calling verifier.requestVerification...");
       setStatusIfMounted({ stage: "requesting" });
       const verifier = getFCCVerifierContractWrite(signer);
       const requestTx = await verifier.requestVerification(
@@ -158,13 +174,15 @@ export default function SendRequestForm() {
         MAILBOX_ADDRESS,
         { value: 0 }
       );
+      console.log("[SendRequestForm] MetaMask signed requestVerification tx:", requestTx.hash);
 
+      console.log("[SendRequestForm] waiting for requestVerification to mine...");
       const requestReceipt = await requestTx.wait();
       if (!requestReceipt) {
         throw new Error("Verification request transaction did not mine.");
       }
+      console.log("[SendRequestForm] requestVerification mined in block:", requestReceipt.blockNumber);
 
-      // Extract the requestHash from the emitted event.
       const iface = new Interface(FCC_VERIFIER_ABI);
       const verificationLog = requestReceipt.logs
         .map((log: ethers.Log) => {
@@ -177,69 +195,117 @@ export default function SendRequestForm() {
         .find((parsed: ethers.LogDescription | null) => parsed?.name === "VerificationRequested");
 
       if (!verificationLog) {
-        throw new Error(
-          "Could not find VerificationRequested event in the transaction receipt."
-        );
+        throw new Error("Could not find VerificationRequested event in the transaction receipt.");
       }
       const requestHash = verificationLog.args.requestHash as string;
+      console.log("[SendRequestForm] extracted requestHash:", requestHash);
       setStatusIfMounted({ stage: "waiting-proof", requestHash });
 
-      // 3) Ask the proxy/relayer for the signed TEE proof.
-      //    In local dev the FCC TypeScript server answers synchronously on /action.
-      //    In production this endpoint is the operator relayer that collects the
-      //    TEE output and may require polling.
+      console.log("[SendRequestForm] fetching TEE proof from proxy...");
       const proof = await fetchProof(proxyUrl, originalMessage, requestHash, abortController.signal);
+      console.log("[SendRequestForm] proof received:", {
+        isVerifiedHuman: proof.isVerifiedHuman,
+        isOldEnoughWallet: proof.isOldEnoughWallet,
+      });
 
-      // 4) Submit the attested proof to the mailbox.
+      console.log("[SendRequestForm] calling mailbox.sendRequestWithProof...");
       setStatusIfMounted({ stage: "submitting" });
       const mailbox = getMailboxContractWrite(signer);
-      const submitTx = await mailbox.sendRequestWithProof(
-        receiver,
-        encodedPreview,
-        proof.isVerifiedHuman,
-        proof.isOldEnoughWallet,
-        deadline,
-        requestHash,
-        proof.signature
-      );
 
+      // Normalize argument types to exactly match the contract ABI:
+      // address, string, bool, bool, uint256, bytes32, bytes
+      const normalizedReceiver = ethers.getAddress(receiver);
+      const normalizedDeadline = BigInt(deadline);
+      const normalizedRequestHash =
+        requestHash.length === 66 && requestHash.startsWith("0x")
+          ? requestHash
+          : ethers.zeroPadValue(requestHash, 32);
+      const normalizedSignature =
+        typeof proof.signature === "string" && proof.signature.startsWith("0x")
+          ? proof.signature
+          : ethers.hexlify(proof.signature);
+
+      console.log("[DEBUG] Args:", {
+        receiver: normalizedReceiver,
+        encodedPreview,
+        isVerifiedHuman: Boolean(proof.isVerifiedHuman),
+        isOldEnoughWallet: Boolean(proof.isOldEnoughWallet),
+        deadline: normalizedDeadline,
+        requestHash: normalizedRequestHash,
+        signature: normalizedSignature,
+      });
+
+      let submitTx;
+      try {
+        submitTx = await mailbox.sendRequestWithProof(
+          normalizedReceiver,
+          encodedPreview,
+          Boolean(proof.isVerifiedHuman),
+          Boolean(proof.isOldEnoughWallet),
+          normalizedDeadline,
+          normalizedRequestHash,
+          normalizedSignature
+        );
+        console.log("[SendRequestForm] MetaMask signed sendRequestWithProof tx:", submitTx.hash);
+      } catch (sendErr: any) {
+        console.error("[DEBUG] sendRequestWithProof FAILED:", sendErr);
+        console.error("[DEBUG] sendRequestWithProof FAILED code:", sendErr?.code);
+        console.error("[DEBUG] sendRequestWithProof FAILED reason:", sendErr?.reason);
+        console.error("[DEBUG] sendRequestWithProof FAILED action:", sendErr?.action);
+        console.error("[DEBUG] sendRequestWithProof FAILED transaction:", sendErr?.transaction);
+        throw sendErr;
+      }
+
+      console.log("[SendRequestForm] waiting for sendRequestWithProof to mine...");
       const submitReceipt = await submitTx.wait();
       if (!submitReceipt || submitReceipt.status !== 1) {
         throw new Error("Mailbox transaction failed on-chain.");
       }
+      console.log("[SendRequestForm] sendRequestWithProof MINED:", submitReceipt.hash);
 
-      setTxHashIfMounted(submitReceipt.hash);
-      setStatusIfMounted({ stage: "done", txHash: submitReceipt.hash });
+      // Set success state immediately after mining. Wrapped in try/catch so
+      // any React state error is surfaced and cannot be silently swallowed.
+      try {
+        setTxHashIfMounted(submitReceipt.hash);
+        setStatusIfMounted({ stage: "done", txHash: submitReceipt.hash });
+        setIsSuccessIfMounted(true);
+        console.log("[SendRequestForm] isSuccess set to TRUE");
+      } catch (stateErr) {
+        console.error("[SendRequestForm] Failed to set success state:", stateErr);
+        throw stateErr;
+      }
 
-      // Publish the chat request to Firebase so the two participants can exchange
-      // messages. Chat access is enforced by RTDB rules and only works once both
-      // users have linked their wallets, so a failure here is surfaced but does not
-      // roll back the on-chain request.
+      // Notify the parent dashboard so the inbox can refresh right away.
+      try {
+        onMessageSent?.();
+        console.log("[SendRequestForm] onMessageSent callback invoked");
+      } catch (callbackErr) {
+        console.error("[SendRequestForm] onMessageSent callback failed:", callbackErr);
+      }
+
+      // Firebase sync is non-critical: it must not reset success state.
       try {
         await publishChatRequest({ txHash: submitReceipt.hash });
+        console.log("[SendRequestForm] publishChatRequest succeeded");
       } catch (publishErr: any) {
+        console.error("[SendRequestForm] publishChatRequest failed:", publishErr);
         setErrorIfMounted(
           `Request is on-chain, but Firebase sync failed: ${publishErr.message ?? "Unknown error"}. ` +
             "The receiver may need to finish onboarding before chat access works."
         );
       }
-
-      // Reset form after success.
-      if (isMountedRef.current) {
-        setReceiver("");
-        setPreview("");
-      }
     } catch (err: any) {
+      console.error("[SendRequestForm] transaction failed:", err);
       setErrorIfMounted(err.reason ?? err.message ?? "Transaction failed");
     } finally {
       setIsSendingIfMounted(false);
       abortControllerRef.current = null;
+      console.log("[SendRequestForm] handleSubmit finished");
     }
   }
 
   /**
    * Fetch a TEE-signed proof from the configured proxy.
-   * Supports synchronous responses and simple asynchronous polling.
    */
   async function fetchProof(
     proxyUrl: string,
@@ -265,6 +331,7 @@ export default function SendRequestForm() {
 
     for (let attempt = 0; attempt < PROOF_POLL_MAX_ATTEMPTS; attempt++) {
       throwIfAborted();
+      console.log(`[SendRequestForm] polling proxy attempt ${attempt + 1}/${PROOF_POLL_MAX_ATTEMPTS}`);
       const response = await fetch(proxyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -278,12 +345,9 @@ export default function SendRequestForm() {
 
       const body = await response.json();
 
-      // status: 0 means the TEE has not produced the proof yet (async proxy).
       if (body.status === 0) {
         if (attempt === PROOF_POLL_MAX_ATTEMPTS - 1) {
-          throw new Error(
-            body.error ?? "Timed out waiting for the TEE signature."
-          );
+          throw new Error(body.error ?? "Timed out waiting for the TEE signature.");
         }
         await sleep(PROOF_POLL_INTERVAL_MS);
         continue;
@@ -298,19 +362,26 @@ export default function SendRequestForm() {
         body.data
       ) as unknown as [boolean, boolean, string, string];
 
-      const [isVerifiedHuman, isOldEnoughWallet, returnedRequestHash, signature] =
-        decoded;
+      const [isVerifiedHuman, isOldEnoughWallet, returnedRequestHash, signature] = decoded;
 
       if (returnedRequestHash.toLowerCase() !== expectedRequestHash.toLowerCase()) {
-        throw new Error(
-          "TEE proof request hash does not match the on-chain request."
-        );
+        throw new Error("TEE proof request hash does not match the on-chain request.");
       }
 
       return { isVerifiedHuman, isOldEnoughWallet, signature };
     }
 
     throw new Error("Timed out waiting for the TEE signature.");
+  }
+
+  if (isSuccess) {
+    console.log("Rendering success screen");
+    return (
+      <div style={{ padding: '20px', border: '1px solid green', color: 'green' }}>
+        Message sent successfully!{" "}
+        <Link href="/inbox">Go to Inbox</Link>
+      </div>
+    );
   }
 
   return (
@@ -392,20 +463,6 @@ export default function SendRequestForm() {
       {error && (
         <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
-        </div>
-      )}
-
-      {txHash && (
-        <div className="mt-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">
-          <p className="font-semibold">Request sent! ✅</p>
-          <a
-            href={`https://coston2.testnet.flarescan.com/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-1 inline-block break-all underline"
-          >
-            {txHash}
-          </a>
         </div>
       )}
     </form>

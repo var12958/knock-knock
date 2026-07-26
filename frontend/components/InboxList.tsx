@@ -19,11 +19,18 @@ interface ChatRequest {
   expirationTime: number;
 }
 
+interface InboxListProps {
+  /** Increment to force a fresh fetch of pending requests. */
+  refreshKey?: number;
+}
+
 const PAGE_SIZE = 20;
 
-export default function InboxList() {
+export default function InboxList({ refreshKey }: InboxListProps) {
+  console.log("[InboxList] component function invoked");
   const router = useRouter();
   const { signer, address } = useWeb3();
+  console.log("[InboxList] hook values:", { address, hasSigner: Boolean(signer) });
   const [requests, setRequests] = useState<ChatRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +39,12 @@ export default function InboxList() {
   const [hasMore, setHasMore] = useState(true);
 
   const loadRequests = useCallback(
-    async (reset = false) => {
+    async (reset = false, currentOffset = offset) => {
       if (!address || !signer) return;
 
-      const currentOffset = reset ? 0 : offset;
+      const offsetToUse = reset ? 0 : currentOffset;
       if (reset) {
+        setRequests([]);
         setOffset(0);
         setHasMore(true);
       }
@@ -45,19 +53,23 @@ export default function InboxList() {
       setError(null);
 
       try {
+        console.log(`[InboxList] loadRequests wallet address=${address}, offset=${offsetToUse}, reset=${reset}`);
+
         // getPendingRequestIds enforces msg.sender == _receiver, so we must
         // use a signer-connected contract even though it is a view call.
         const readContract = getMailboxContractRead();
         const signerContract = getMailboxContractWrite(signer);
         const ids: bigint[] = await signerContract.getPendingRequestIds(
           address,
-          currentOffset,
+          offsetToUse,
           PAGE_SIZE
         );
+        console.log(`[InboxList] raw getPendingRequestIds result:`, ids);
 
         const pending: ChatRequest[] = [];
         for (const id of ids) {
           const req = await readContract.requests(id);
+          console.log(`[InboxList] request ${id.toString()}:`, req);
           pending.push({
             requestId: id.toString(),
             sender: req.sender,
@@ -71,30 +83,33 @@ export default function InboxList() {
           });
         }
 
+        console.log(`[InboxList] processed ${pending.length} pending requests`);
         setRequests((prev) => (reset ? pending : [...prev, ...pending]));
         setHasMore(ids.length === PAGE_SIZE);
         if (!reset) {
           setOffset((prev) => prev + ids.length);
         }
       } catch (err: any) {
-        console.error("Failed to load inbox:", err);
+        console.error("[InboxList] Failed to load inbox:", err);
         setError(err.reason ?? err.message ?? "Could not load pending requests");
       } finally {
         setLoading(false);
       }
     },
-    [address, signer, offset]
+    [address, signer]
   );
 
   useEffect(() => {
+    console.log("[InboxList] useEffect triggered:", { address, hasSigner: Boolean(signer), refreshKey });
     if (address && signer) {
       loadRequests(true);
     } else {
+      console.log("[InboxList] skipping fetch: missing address or signer");
       setRequests([]);
       setOffset(0);
       setHasMore(true);
     }
-  }, [address, signer, loadRequests]);
+  }, [address, signer, refreshKey, loadRequests]);
 
   const handleAccept = useCallback(
     async (requestId: string) => {
@@ -140,6 +155,7 @@ export default function InboxList() {
   );
 
   if (!address) {
+    console.log("[InboxList] render: no address, showing connect prompt");
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-sm">
         <p className="text-slate-600">Connect your MetaMask wallet to view your inbox.</p>
@@ -147,6 +163,7 @@ export default function InboxList() {
     );
   }
 
+  console.log("[InboxList] render: rendering list UI, request count=", requests.length);
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-6 flex items-center justify-between">
@@ -228,7 +245,7 @@ export default function InboxList() {
 
           {hasMore && (
             <button
-              onClick={() => loadRequests(false)}
+              onClick={() => loadRequests(false, offset)}
               disabled={loading}
               className="mt-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
             >

@@ -19,29 +19,52 @@ export default function RequireVerified({ children }: RequireVerifiedProps) {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading) {
+      console.log("[RequireVerified] waiting for Firebase auth state...");
+      return;
+    }
 
     async function checkProfile() {
       if (!user) {
+        console.log("[RequireVerified] no Firebase user; redirecting to /onboard");
         router.replace("/onboard");
         return;
       }
 
+      console.log(`[RequireVerified] Firebase user present: ${user.uid}`);
+
       try {
         const profile = await getUserProfile(user.uid);
+        console.log("[RequireVerified] profile loaded:", profile);
+
+        const hasVerifiedAt = Boolean(profile?.verifiedAt);
+        const hasWallet = Boolean(profile?.walletAddress);
+        const isVerifiedHuman = profile?.isVerifiedHuman === true;
+        const isOldEnoughWallet = profile?.isOldEnoughWallet === true;
+
+        console.log("[RequireVerified] checks:", {
+          hasVerifiedAt,
+          hasWallet,
+          isVerifiedHuman,
+          isOldEnoughWallet,
+          verifiedAt: profile?.verifiedAt ?? null,
+        });
+
         const isVerified =
-          Boolean(profile?.verifiedAt) &&
-          Boolean(profile?.walletAddress) &&
-          profile?.isVerifiedHuman === true &&
-          profile?.isOldEnoughWallet === true;
+          hasVerifiedAt && hasWallet && isVerifiedHuman && isOldEnoughWallet;
 
         if (!isVerified) {
+          console.log(
+            "[RequireVerified] user is not fully verified; redirecting to /onboard",
+          );
           router.replace("/onboard");
           return;
         }
+
+        console.log("[RequireVerified] user is verified; rendering protected route");
         setChecking(false);
       } catch (err) {
-        console.error("Failed to check verification status:", err);
+        console.error("[RequireVerified] Failed to check verification status:", err);
         router.replace("/onboard");
       }
     }

@@ -15,7 +15,7 @@ import { COSTON2_CHAIN_ID } from "@/lib/chain";
 
 const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 24;
-const PROFILE_LOOKUP_TIMEOUT_MS = 5000;
+const PROFILE_LOOKUP_TIMEOUT_MS = 15_000;
 
 export type OnboardingStep =
   | "auth"
@@ -93,22 +93,36 @@ export default function OnboardingWizard() {
           ),
         ]);
         if (cancelled) return;
+
+        console.log("[OnboardingWizard] loaded profile:", profile);
+
         if (!profile?.username) {
+          console.log("[OnboardingWizard] no username -> username step");
           setStep("username");
         } else if (!profile?.walletAddress) {
+          console.log("[OnboardingWizard] no wallet -> wallet step");
           setStep("wallet");
         } else if (
           !profile?.verifiedAt ||
           profile?.isVerifiedHuman !== true ||
           profile?.isOldEnoughWallet !== true
         ) {
+          console.log(
+            "[OnboardingWizard] not fully verified -> verify step",
+            {
+              verifiedAt: profile?.verifiedAt ?? null,
+              isVerifiedHuman: profile?.isVerifiedHuman ?? null,
+              isOldEnoughWallet: profile?.isOldEnoughWallet ?? null,
+            },
+          );
           setStep("verify");
         } else {
+          console.log("[OnboardingWizard] fully verified -> redirect to /send");
           router.replace("/send");
         }
       } catch (err: any) {
         if (cancelled) return;
-        console.error("Failed to load profile:", err);
+        console.error("[OnboardingWizard] Failed to load profile:", err);
         setError("Could not load your profile. Please refresh and try again.");
       } finally {
         if (!cancelled) setProfileLoading(false);
