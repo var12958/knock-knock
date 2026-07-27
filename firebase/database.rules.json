@@ -30,11 +30,11 @@
     },
     "chats": {
       "$requestId": {
-        ".read": "auth != null && root.child('requests').child($requestId).exists() && (auth.uid == root.child('requests').child($requestId).child('senderUid').val() || auth.uid == root.child('requests').child($requestId).child('receiverUid').val())",
+        ".read": true,
+        ".write": true,
         "messages": {
           "$messageId": {
-            ".validate": "newData.hasChildren(['sender', 'text', 'timestamp']) && root.child('walletAddresses').child(newData.child('sender').val().toLowerCase()).child('uid').val() == auth.uid",
-            ".write": "auth != null && root.child('requests').child($requestId).exists() && (auth.uid == root.child('requests').child($requestId).child('senderUid').val() || auth.uid == root.child('requests').child($requestId).child('receiverUid').val())"
+            ".validate": "newData.hasChildren(['sender', 'text', 'timestamp'])"
           }
         }
       }

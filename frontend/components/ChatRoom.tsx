@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ref, push, onValue, off } from "firebase/database";
+import { ref, push, set, onValue, off } from "firebase/database";
+import { getAuth } from "firebase/auth";
 import { realtimeDb } from "@/lib/firebase";
 import { useWeb3 } from "@/context/Web3Context";
 import { getMailboxContractRead } from "@/lib/contracts";
@@ -106,36 +107,46 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
     const messagesRef = ref(realtimeDb, `chats/${requestId}/messages`);
     const key = deriveChatKey(request.sender, request.receiver);
 
-    const unsubscribe = onValue(messagesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setMessages([]);
-        return;
-      }
+    console.log(`[ChatRoom] Subscribing to read path: chats/${requestId}/messages`);
+    console.log("[ChatRoom] Firebase Auth currentUser (read):", getAuth(realtimeDb.app).currentUser);
 
-      const loaded: ChatMessage[] = [];
-
-      Object.entries(data).forEach(([id, value]: [string, any]) => {
-        if (
-          !value ||
-          typeof value.sender !== "string" ||
-          typeof value.text !== "string"
-        ) {
+    const unsubscribe = onValue(
+      messagesRef,
+      (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+          setMessages([]);
           return;
         }
-        const plain = decryptMessage(value.text, key);
-        loaded.push({
-          id,
-          sender: value.sender,
-          text: plain ?? "🔒 Unable to decrypt message",
-          timestamp: value.timestamp ?? 0,
-          isMine: value.sender.toLowerCase() === address.toLowerCase(),
-        });
-      });
 
-      loaded.sort((a, b) => a.timestamp - b.timestamp);
-      setMessages(loaded);
-    });
+        const loaded: ChatMessage[] = [];
+
+        Object.entries(data).forEach(([id, value]: [string, any]) => {
+          if (
+            !value ||
+            typeof value.sender !== "string" ||
+            typeof value.text !== "string"
+          ) {
+            return;
+          }
+          const plain = decryptMessage(value.text, key);
+          loaded.push({
+            id,
+            sender: value.sender,
+            text: plain ?? "🔒 Unable to decrypt message",
+            timestamp: value.timestamp ?? 0,
+            isMine: value.sender.toLowerCase() === address.toLowerCase(),
+          });
+        });
+
+        loaded.sort((a, b) => a.timestamp - b.timestamp);
+        setMessages(loaded);
+      },
+      (err: any) => {
+        console.error("[ChatRoom] Firebase read failed:", err);
+        setError(err.message ?? "Failed to load messages");
+      },
+    );
 
     return () => {
       unsubscribe();
@@ -161,7 +172,19 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       const key = deriveChatKey(request.sender, request.receiver);
       const encrypted = encryptMessage(draft.trim(), key);
 
-      await push(ref(realtimeDb, `chats/${requestId}/messages`), {
+      const messagesRef = ref(realtimeDb, `chats/${requestId}/messages`);
+      const newMessageRef = push(messagesRef);
+      const exactPath = `chats/${requestId}/messages/${newMessageRef.key}`;
+
+      console.log(`[ChatRoom] Database write path: ${exactPath}`);
+      console.log("[ChatRoom] Firebase Auth currentUser (write):", getAuth(realtimeDb.app).currentUser);
+      console.log("[ChatRoom] Message payload:", {
+        sender: address,
+        text: encrypted,
+        timestamp: Date.now(),
+      });
+
+      await set(newMessageRef, {
         sender: address,
         text: encrypted,
         timestamp: Date.now(),
@@ -169,7 +192,9 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
 
       setDraft("");
     } catch (err: any) {
-      console.error("Failed to send message:", err);
+      console.error("[ChatRoom] Failed to send message:", err);
+      console.error("[ChatRoom] Error code:", err.code);
+      console.error("[ChatRoom] Error message:", err.message);
       setError(err.message ?? "Message could not be sent");
     } finally {
       setSending(false);
