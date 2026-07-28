@@ -7,6 +7,12 @@
         ".validate": "newData.hasChildren(['uid', 'username', 'createdAt']) && newData.child('uid').val() == $uid && !newData.hasChild('isVerifiedHuman') && !newData.hasChild('isOldEnoughWallet') && !newData.hasChild('verificationTxHash') && !newData.hasChild('verifiedAt') && (!data.hasChild('walletAddress') || newData.child('walletAddress').val() == data.child('walletAddress').val())"
       }
     },
+    "contacts": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
     "usernames": {
       "$username": {
         ".read": true,

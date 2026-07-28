@@ -7,17 +7,19 @@ import { realtimeDb } from "./firebase";
  * Private contact nicknames for the KnockKnock inbox.
  *
  * Each user keeps their own address book so the labels are private to them:
- *   users/{uid}/contacts/{senderAddress} = "nickname"
+ *   contacts/{uid}/{senderAddress} = "nickname"
  *
- * The address key is lowercased so checksummed and lowercase addresses resolve
- * to the same contact entry. Setting a value of `null` clears the nickname.
+ * This is a dedicated top-level node (see firebase/database.rules.json) so the
+ * strict `.validate` rule on `users/$uid` does not reject nickname writes. The
+ * address key is lowercased so checksummed and lowercase addresses resolve to
+ * the same contact entry. Setting a value of `null` clears the nickname.
  */
 
 function contactsRef(uid: string, senderAddress: string) {
   if (!realtimeDb) {
     throw new Error("Firebase Database is not configured.");
   }
-  return ref(realtimeDb, `users/${uid}/contacts/${senderAddress.toLowerCase()}`);
+  return ref(realtimeDb, `contacts/${uid}/${senderAddress.toLowerCase()}`);
 }
 
 /** Fetch a single contact nickname. Returns null if none is set. */
