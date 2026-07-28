@@ -20,15 +20,11 @@ export default function Dashboard() {
 
   return (
     <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
-      <section className="flex flex-col gap-6">
+      <section className="rounded-3xl border border-[#DFD0B8]/10 bg-[#393E46] p-8 shadow-xl shadow-black/20 transition-all duration-300 hover:-translate-y-1 hover:border-[#DFD0B8]/20 hover:shadow-2xl hover:shadow-black/30">
         <SendRequestForm onMessageSent={handleMessageSent} />
       </section>
 
-      <section className="flex flex-col gap-6">
-        {(() => {
-          console.log("[Dashboard] rendering InboxList");
-          return null;
-        })()}
+      <section className="rounded-3xl border border-[#DFD0B8]/10 bg-[#393E46] p-8 shadow-xl shadow-black/20 transition-all duration-300 hover:-translate-y-1 hover:border-[#DFD0B8]/20 hover:shadow-2xl hover:shadow-black/30">
         <InboxList refreshKey={inboxRefreshKey} />
       </section>
     </div>

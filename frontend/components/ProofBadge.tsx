@@ -6,10 +6,10 @@ interface ProofBadgeProps {
 export default function ProofBadge({ label, active }: ProofBadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
         active
-          ? "bg-green-100 text-green-700"
-          : "bg-slate-100 text-slate-500"
+          ? "border-[#DFD0B8]/20 bg-[#222831] text-[#DFD0B8]"
+          : "border-[#948979]/20 bg-[#393E46]/60 text-[#948979]"
       }`}
     >
       <span className="text-sm">{active ? "✅" : "➖"}</span>

@@ -299,9 +299,10 @@ contract KnockKnockMailbox is Ownable, ReentrancyGuard {
      * @notice Accept a pending chat request.
      * @param _requestId The ID of the request to accept.
      * @dev Only the receiver may accept. Sets `accepted` and `isRevealed` to true,
-     *      marks the sender-receiver pair as no longer active, removes the request
-     *      from the receiver's pending list, and deletes the encrypted preview from
-     *      storage to reduce the on-chain data footprint.
+     *      marks the sender-receiver pair as no longer active, and deletes the
+     *      encrypted preview from storage to reduce the on-chain data footprint.
+     *      The request ID is intentionally kept in the receiver's list so it can
+     *      be retrieved later via `getRequestsByReceiver` for a chat history view.
      */
     function acceptRequest(uint256 _requestId)
         external
@@ -321,8 +322,9 @@ contract KnockKnockMailbox is Ownable, ReentrancyGuard {
         // Clear the encrypted preview to reduce long-term storage of ciphertext.
         delete request.encryptedPreviewMessage;
 
+        // Mark the sender-receiver pair as no longer active, but keep the request
+        // ID in the receiver's list so it remains visible in history.
         senderReceiverRequestId[request.sender][request.receiver] = 0;
-        _removeReceiverRequestId(request.receiver, _requestId);
 
         emit RequestAccepted(_requestId, msg.sender);
     }
@@ -453,6 +455,66 @@ contract KnockKnockMailbox is Ownable, ReentrancyGuard {
         ids = new uint256[](pendingFound);
         for (uint256 i = 0; i < pendingFound; i++) {
             ids[i] = pendingIds[i];
+        }
+    }
+
+    /**
+     * @notice Return all requests ever sent to a receiver, including accepted ones.
+     * @param _receiver The address whose request history should be listed.
+     * @param _offset The number of requests to skip (for pagination).
+     * @param _limit The maximum number of requests to return (capped at MAX_PAGE_SIZE).
+     * @return ids Array of request IDs for the receiver.
+     * @return receiverRequests Array of ChatRequest structs for the receiver.
+     * @dev Unlike `getPendingRequests`, this does NOT filter out accepted or expired
+     *      requests. It is intended for a "History / Accepted Chats" view. Rejected
+     *      requests are excluded because `requestExists` is false for cleaned-up IDs.
+     */
+    function getRequestsByReceiver(
+        address _receiver,
+        uint256 _offset,
+        uint256 _limit
+    )
+        external
+        view
+        returns (uint256[] memory ids, ChatRequest[] memory receiverRequests)
+    {
+        require(
+            msg.sender == _receiver,
+            "Only the receiver can view their requests"
+        );
+
+        uint256[] storage receiverRequestIds = receiverToRequestIds[_receiver];
+
+        if (_limit > MAX_PAGE_SIZE) {
+            _limit = MAX_PAGE_SIZE;
+        }
+
+        uint256[] memory matchedIds = new uint256[](_limit);
+        uint256 matchedFound = 0;
+        uint256 skipped = 0;
+        for (uint256 i = 0; i < receiverRequestIds.length; i++) {
+            uint256 requestId = receiverRequestIds[i];
+            if (!requestExists[requestId]) {
+                continue;
+            }
+
+            if (skipped < _offset) {
+                skipped++;
+                continue;
+            }
+
+            matchedIds[matchedFound] = requestId;
+            matchedFound++;
+            if (matchedFound == _limit) {
+                break;
+            }
+        }
+
+        ids = new uint256[](matchedFound);
+        receiverRequests = new ChatRequest[](matchedFound);
+        for (uint256 i = 0; i < matchedFound; i++) {
+            ids[i] = matchedIds[i];
+            receiverRequests[i] = requests[matchedIds[i]];
         }
     }
 

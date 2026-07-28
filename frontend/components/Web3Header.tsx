@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getUserProfile } from "@/lib/firebaseProfile";
@@ -12,7 +13,7 @@ function shortenAddress(address: string): string {
 }
 
 export default function Web3Header() {
-  const { address, chainId, isConnecting, error, connect } = useWeb3();
+  const { address, chainId, isConnecting, error, connect, disconnect } = useWeb3();
   const { user } = useFirebaseAuth();
   const [username, setUsername] = useState<string | null>(null);
   const [usernameLoading, setUsernameLoading] = useState(false);
@@ -20,7 +21,6 @@ export default function Web3Header() {
 
   useEffect(() => {
     if (!user?.uid) {
-      console.log("[Web3Header] no user.uid, clearing username");
       setUsername(null);
       setUsernameLoading(false);
       return;
@@ -28,15 +28,11 @@ export default function Web3Header() {
 
     let cancelled = false;
     setUsernameLoading(true);
-    console.log("[Web3Header] fetching profile for uid:", user.uid);
 
     getUserProfile(user.uid)
       .then((profile) => {
-        console.log("[Web3Header] profile result:", profile);
         if (!cancelled) {
-          const fetchedUsername = profile?.username ?? null;
-          console.log("[Web3Header] setting username to:", fetchedUsername);
-          setUsername(fetchedUsername);
+          setUsername(profile?.username ?? null);
         }
       })
       .catch((err) => {
@@ -55,51 +51,83 @@ export default function Web3Header() {
 
   const hasUsername = Boolean(username && username.trim());
   const displayName = hasUsername
-    ? username!
+    ? (username ?? "").toUpperCase()
     : address
       ? shortenAddress(address)
       : "";
 
-  console.log("[Web3Header] render displayName:", displayName, "hasUsername:", hasUsername, "address:", address);
-
   return (
-    <header className="w-full border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-      <div className="mx-auto flex max-w-5xl items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-xl">
-            🚪
+    <header className="sticky top-0 z-50 w-full border-b border-[#DFD0B8]/10 bg-[#222831]/80 px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:px-6 lg:px-8">
+      {/* Hairline gradient accent under the header */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#DFD0B8]/25 to-transparent"
+      />
+      <div className="relative mx-auto flex max-w-7xl items-center justify-between">
+        <Link href="/" className="group flex items-center gap-4">
+          <div className="relative h-11 w-11 overflow-hidden rounded-xl ring-1 ring-[#DFD0B8]/20 transition-all duration-300 group-hover:ring-[#DFD0B8]/40 group-hover:shadow-[0_0_20px_rgba(223,208,184,0.15)]">
+            <Image
+              src="/logo.png"
+              alt="KnockKnock"
+              fill
+              className="object-cover"
+              priority
+            />
           </div>
-          <h1 className="text-xl font-bold text-slate-800">KnockKnock</h1>
+          <div className="hidden flex-col sm:flex">
+            <h1 className="text-lg font-bold tracking-tight text-[#DFD0B8]">
+              KnockKnock
+            </h1>
+            <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-[#948979]">
+              Privacy-first Web3 messaging
+            </span>
+          </div>
         </Link>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {address ? (
-            <div className="flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-2">
-              <div className="flex flex-col items-end">
-                <span className="text-sm font-medium text-slate-700">
-                  {displayName}
+            <div className="flex items-center gap-3 rounded-2xl border border-[#DFD0B8]/10 bg-[#393E46] px-4 py-2.5 shadow-lg shadow-black/20 transition-all duration-300 hover:border-[#DFD0B8]/20">
+              <div className="hidden flex-col items-end sm:flex">
+                <span className="text-sm font-bold tracking-wide text-[#DFD0B8]">
+                  {usernameLoading ? "..." : displayName}
                 </span>
                 {hasUsername && address && (
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-[#948979]">
                     {shortenAddress(address)}
                   </span>
                 )}
+              </div>
+
+              <div className="flex flex-col items-end gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#DFD0B8]/20 bg-[#222831] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#DFD0B8]">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 animate-pulse-ring" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+                  </span>
+                  Verified
+                </span>
                 <span
-                  className={`text-xs font-semibold ${
-                    isCorrectNetwork ? "text-green-600" : "text-red-600"
+                  className={`text-[10px] font-medium ${
+                    isCorrectNetwork ? "text-[#948979]" : "text-rose-400"
                   }`}
                 >
-                  {isCorrectNetwork
-                    ? "Flare Coston2"
-                    : `Wrong network (${chainId ?? "unknown"})`}
+                  {isCorrectNetwork ? "Coston2" : `Wrong network (${chainId ?? "unknown"})`}
                 </span>
               </div>
+
+              <button
+                onClick={disconnect}
+                className="ml-2 rounded-lg border border-[#DFD0B8]/10 px-3 py-1.5 text-xs font-semibold text-[#948979] transition-all duration-200 hover:border-[#DFD0B8]/30 hover:bg-[#222831] hover:text-[#DFD0B8]"
+                title="Disconnect wallet"
+              >
+                Disconnect
+              </button>
             </div>
           ) : (
             <button
               onClick={connect}
               disabled={isConnecting}
-              className="rounded-lg bg-brand-600 px-5 py-2.5 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-2xl bg-[#DFD0B8] px-6 py-2.5 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/10 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/20 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isConnecting ? "Connecting..." : "Connect MetaMask"}
             </button>
@@ -108,7 +136,7 @@ export default function Web3Header() {
       </div>
 
       {error && (
-        <div className="mx-auto mt-3 max-w-5xl rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="mx-auto mt-3 max-w-7xl rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm text-rose-300 ring-1 ring-rose-500/10">
           {error}
         </div>
       )}

@@ -225,6 +225,10 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
           ? proof.signature
           : ethers.hexlify(proof.signature);
 
+      console.log(
+        "[SendRequestForm] exact _receiver passed to sendRequestWithProof:",
+        normalizedReceiver
+      );
       console.log("[DEBUG] Args:", {
         receiver: normalizedReceiver,
         encodedPreview,
@@ -377,9 +381,25 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
   if (isSuccess) {
     console.log("Rendering success screen");
     return (
-      <div style={{ padding: '20px', border: '1px solid green', color: 'green' }}>
-        Message sent successfully!{" "}
-        <Link href="/inbox">Go to Inbox</Link>
+      <div className="rounded-2xl border border-[#DFD0B8]/20 bg-[#222831] p-10 text-center shadow-inner">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#DFD0B8] text-2xl text-[#222831] shadow-[0_0_20px_rgba(223,208,184,0.3)]">
+          ✓
+        </div>
+        <h3 className="mb-3 text-2xl font-bold text-[#DFD0B8]">Knock sent successfully</h3>
+        <p className="mb-8 text-sm text-[#948979]">
+          Your TEE-verified request is on-chain and waiting for the receiver.
+        </p>
+        {txHash && (
+          <p className="mb-8 break-all text-xs text-[#948979]">
+            Tx: {txHash}
+          </p>
+        )}
+        <Link
+          href="/inbox"
+          className="inline-flex items-center rounded-2xl bg-[#DFD0B8] px-6 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
+        >
+          Go to Inbox
+        </Link>
       </div>
     );
   }
@@ -387,14 +407,16 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
   return (
     <form
       onSubmit={handleSubmit}
-      className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"
+      className="mx-auto max-w-xl"
     >
-      <h2 className="mb-6 text-2xl font-bold text-slate-800">Send a Knock 👋</h2>
+      <h2 className="mb-8 text-3xl font-bold tracking-tight text-[#DFD0B8]">
+        Send a Knock
+      </h2>
 
-      <div className="mb-5">
+      <div className="mb-6">
         <label
           htmlFor="receiver"
-          className="mb-2 block text-sm font-medium text-slate-700"
+          className="mb-2 block text-sm font-semibold text-[#DFD0B8]"
         >
           Receiver address
         </label>
@@ -405,14 +427,14 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
           onChange={(e) => setReceiver(e.target.value)}
           placeholder="0x..."
           disabled={!isConnected || isSending}
-          className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50"
+          className="w-full rounded-xl border border-[#948979]/50 bg-[#222831] px-4 py-3.5 text-sm text-[#DFD0B8] transition-all duration-200 placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/50 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
-      <div className="mb-5">
+      <div className="mb-6">
         <label
           htmlFor="preview"
-          className="mb-2 block text-sm font-medium text-slate-700"
+          className="mb-2 block text-sm font-semibold text-[#DFD0B8]"
         >
           Encrypted preview message
         </label>
@@ -423,17 +445,17 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
           placeholder="A short message only the receiver will see..."
           rows={3}
           disabled={!isConnected || isSending}
-          className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50"
+          className="w-full resize-none rounded-xl border border-[#948979]/50 bg-[#222831] px-4 py-3.5 text-sm leading-relaxed text-[#DFD0B8] transition-all duration-200 placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/50 disabled:cursor-not-allowed disabled:opacity-50"
         />
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-[#948979]">
           Stored as a hex-encoded string on-chain. Real E2E encryption is
           recommended for production.
         </p>
       </div>
 
-      <div className="mb-6 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-800">
-        <p className="font-semibold">Privacy-preserving verification</p>
-        <p className="mt-1">
+      <div className="mb-8 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] px-5 py-4 text-sm">
+        <p className="font-bold text-[#DFD0B8]">Privacy-preserving verification</p>
+        <p className="mt-1 text-[#948979]">
           Your wallet age and humanity are checked inside the Flare TEE. The
           resulting proof is submitted to the mailbox — no self-reported boxes
           needed.
@@ -443,25 +465,25 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       <button
         type="submit"
         disabled={!isConnected || isSending || isWrongNetwork || !MAILBOX_ADDRESS}
-        className="w-full rounded-lg bg-brand-600 px-5 py-3 font-semibold text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-6 py-4 text-base font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:bg-[#948979] disabled:text-[#222831] disabled:opacity-60 disabled:shadow-none disabled:from-[#948979] disabled:to-[#948979]"
       >
         {isSending ? progressLabel(status) : "Send Knock"}
       </button>
 
       {!MAILBOX_ADDRESS && (
-        <p className="mt-3 text-sm text-red-600">
+        <p className="mt-3 text-sm text-rose-400">
           Mailbox contract address is not configured.
         </p>
       )}
 
       {status.stage !== "idle" && status.stage !== "done" && (
-        <p className="mt-3 text-sm text-slate-600">
+        <p className="mt-4 text-sm text-[#948979]">
           {progressDetail(status)}
         </p>
       )}
 
       {error && (
-        <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mt-5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-300">
           {error}
         </div>
       )}

@@ -2,7 +2,159 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  html,
+  body {
+    @apply bg-[#222831] text-[#DFD0B8] antialiased;
+  }
+
+  body {
+    background-image:
+      radial-gradient(60rem 60rem at 110% -10%, rgba(223, 208, 184, 0.06), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 0%, rgba(223, 208, 184, 0.04), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background-color: rgba(223, 208, 184, 0.25);
+    color: #dfd0b8;
+  }
+}
+
+/* Subtle, premium scrollbar that blends into the dark theme */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(223, 208, 184, 0.22) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(223, 208, 184, 0.18);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(223, 208, 184, 0.34);
+  }
+}
+
+/* Entrance + accent animations used across the app */
+@keyframes kk-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes kk-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes kk-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  60% {
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes kk-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+
+@keyframes kk-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@layer utilities {
+  .animate-step-in {
+    animation: kk-step-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-message-in {
+    animation: kk-message-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-pop {
+    animation: kk-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-pulse-ring {
+    animation: kk-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .text-shimmer {
+    background: linear-gradient(
+      90deg,
+      #948979 0%,
+      #dfd0b8 50%,
+      #948979 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: kk-shimmer 3.5s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .animate-step-in,
+  .animate-message-in,
+  .animate-pop,
+  .animate-pulse-ring,
+  .text-shimmer {
+    animation: none !important;
+  }
 }

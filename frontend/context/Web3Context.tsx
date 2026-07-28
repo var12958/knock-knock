@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { COSTON2_CHAIN_ID, COSTON2_CONFIG } from "@/lib/chain";
 
@@ -92,17 +92,67 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
     setError(null);
   }
 
+  // Stable ref used to ignore stale async updates when accounts switch rapidly.
+  const switchNonceRef = useRef(0);
+
   // Listen for account and chain changes while connected.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const ethProvider = (window as any).ethereum;
     if (!ethProvider) return;
 
-    const handleAccountsChanged = (accounts: string[]) => {
+    const handleAccountsChanged = async (accounts: string[]) => {
       if (accounts.length === 0) {
         disconnect();
-      } else if (accounts[0] !== address) {
-        connect();
+        return;
+      }
+
+      // Increment nonce so any in-flight update from a previous switch can be
+      // discarded if a newer event arrives.
+      const currentSwitch = ++switchNonceRef.current;
+
+      try {
+        const rawAccount = accounts[0];
+        const newAddress = ethers.getAddress(rawAccount);
+
+        // Refresh the signer/provider for the new account without going
+        // through the full connect() flow (which prompts for network switch).
+        const browserProvider = new ethers.BrowserProvider(ethProvider);
+        const newSigner = await browserProvider.getSigner();
+        const signerAddress = await newSigner.getAddress();
+
+        // Drop this update if it was superseded by a newer accountsChanged
+        // event, or if MetaMask returned a different account than the one that
+        // fired the event.
+        if (currentSwitch !== switchNonceRef.current) return;
+        if (signerAddress !== newAddress) {
+          console.warn(
+            "[Web3Context] Signer address mismatch after switch:",
+            signerAddress,
+            "!==",
+            newAddress
+          );
+          return;
+        }
+
+        const network = await browserProvider.getNetwork();
+        if (currentSwitch !== switchNonceRef.current) return;
+
+        console.log(
+          "[Web3Context] MetaMask account switched to:",
+          newAddress
+        );
+
+        setProvider(browserProvider);
+        setSigner(newSigner);
+        setAddress(newAddress);
+        setChainId(Number(network.chainId));
+        setError(null);
+      } catch (err: any) {
+        // Only surface errors from the most recent switch event.
+        if (currentSwitch !== switchNonceRef.current) return;
+        console.error("[Web3Context] Account switch failed:", err);
+        setError(err.message ?? "Failed to switch account");
       }
     };
 
@@ -117,7 +167,7 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
       ethProvider.removeListener("accountsChanged", handleAccountsChanged);
       ethProvider.removeListener("chainChanged", handleChainChanged);
     };
-  }, [address]);
+  }, []);
 
   return (
     <Web3Context.Provider

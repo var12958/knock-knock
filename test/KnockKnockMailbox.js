@@ -393,6 +393,49 @@ describe("KnockKnockMailbox", function () {
     });
   });
 
+  describe("getRequestsByReceiver", function () {
+    beforeEach(async function () {
+      await mailbox
+        .connect(sender)
+        .sendRequest(receiver.address, ENCRYPTED_PREVIEW, true, true);
+      const [, , , , secondSender] = await ethers.getSigners();
+      await mailbox
+        .connect(secondSender)
+        .sendRequest(receiver.address, "second-message", false, true);
+    });
+
+    it("returns all requests for the receiver including accepted ones", async function () {
+      await mailbox.connect(receiver).acceptRequest(1);
+
+      const [ids, history] = await mailbox
+        .connect(receiver)
+        .getRequestsByReceiver(receiver.address, 0, 20);
+
+      expect(ids.length).to.equal(2);
+      expect(history.length).to.equal(2);
+      expect(history[0].accepted).to.equal(true);
+      expect(history[1].accepted).to.equal(false);
+    });
+
+    it("does not include rejected requests", async function () {
+      await mailbox.connect(receiver).rejectRequest(1);
+
+      const [ids, history] = await mailbox
+        .connect(receiver)
+        .getRequestsByReceiver(receiver.address, 0, 20);
+
+      expect(ids.length).to.equal(1);
+      expect(history.length).to.equal(1);
+      expect(history[0].encryptedPreviewMessage).to.equal("second-message");
+    });
+
+    it("reverts when a non-receiver queries someone else's history", async function () {
+      await expect(
+        mailbox.connect(other).getRequestsByReceiver(receiver.address, 0, 20)
+      ).to.be.revertedWith("Only the receiver can view their requests");
+    });
+  });
+
   describe("setRequestExpirationDuration", function () {
     it("allows the owner to update the expiration duration", async function () {
       const newDuration = SEVEN_DAYS * 2;

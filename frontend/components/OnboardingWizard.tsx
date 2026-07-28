@@ -364,62 +364,65 @@ export default function OnboardingWizard() {
       : null;
 
   return (
-    <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+    <div className="mx-auto max-w-2xl rounded-3xl border border-[#DFD0B8]/10 bg-[#393E46]/80 p-8 shadow-2xl shadow-black/30 backdrop-blur-sm sm:p-10">
       <StepIndicator current={step} />
 
-      {step === "auth" && (
-        <AuthStep
-          mode={authMode}
-          setMode={setAuthMode}
-          email={email}
-          setEmail={setEmail}
-          password={password}
-          setPassword={setPassword}
-          confirmPassword={confirmPassword}
-          setConfirmPassword={setConfirmPassword}
-          authName={authName}
-          setAuthName={setAuthName}
-          onGoogleSignIn={handleGoogleSignIn}
-          onEmailSignIn={handleEmailSignIn}
-          onEmailSignUp={handleEmailSignUp}
-          disabled={isAuthDisabled}
-          disabledReason={disabledReason}
-        />
-      )}
+      {/* key forces a fresh entrance animation on every step change */}
+      <div key={step} className="animate-step-in">
+        {step === "auth" && (
+          <AuthStep
+            mode={authMode}
+            setMode={setAuthMode}
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            confirmPassword={confirmPassword}
+            setConfirmPassword={setConfirmPassword}
+            authName={authName}
+            setAuthName={setAuthName}
+            onGoogleSignIn={handleGoogleSignIn}
+            onEmailSignIn={handleEmailSignIn}
+            onEmailSignUp={handleEmailSignUp}
+            disabled={isAuthDisabled}
+            disabledReason={disabledReason}
+          />
+        )}
 
-      {step === "username" && (
-        <UsernameStep
-          username={username}
-          setUsername={setUsername}
-          checking={checkingUsername}
-          onSubmit={handleUsernameSubmit}
-        />
-      )}
+        {step === "username" && (
+          <UsernameStep
+            username={username}
+            setUsername={setUsername}
+            checking={checkingUsername}
+            onSubmit={handleUsernameSubmit}
+          />
+        )}
 
-      {step === "wallet" && (
-        <WalletStep
-          address={address}
-          chainId={chainId}
-          onConnect={handleConnectWallet}
-          onSignAndLink={handleSignAndLinkWallet}
-          linking={linkingWallet}
-        />
-      )}
+        {step === "wallet" && (
+          <WalletStep
+            address={address}
+            chainId={chainId}
+            onConnect={handleConnectWallet}
+            onSignAndLink={handleSignAndLinkWallet}
+            linking={linkingWallet}
+          />
+        )}
 
-      {step === "verify" && (
-        <VerifyStep
-          verifying={verifying}
-          result={verificationResult}
-          onVerify={handleVerifyIdentity}
-        />
-      )}
+        {step === "verify" && (
+          <VerifyStep
+            verifying={verifying}
+            result={verificationResult}
+            onVerify={handleVerifyIdentity}
+          />
+        )}
 
-      {step === "complete" && (
-        <CompleteStep onComplete={handleComplete} />
-      )}
+        {step === "complete" && (
+          <CompleteStep onComplete={handleComplete} />
+        )}
+      </div>
 
       {displayedError && (
-        <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mt-5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
           {displayedError}
         </div>
       )}
@@ -437,9 +440,10 @@ function StepIndicator({ current }: { current: OnboardingStep }) {
   ];
 
   const index = steps.findIndex((s) => s.key === current);
+  const progress = (index / (steps.length - 1)) * 100;
 
   return (
-    <div className="mb-8">
+    <div className="mb-10">
       <div className="flex items-center justify-between">
         {steps.map((s, i) => {
           const isActive = i <= index;
@@ -447,19 +451,34 @@ function StepIndicator({ current }: { current: OnboardingStep }) {
           return (
             <div key={s.key} className="flex flex-1 flex-col items-center">
               <div
-                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
+                className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold transition-all duration-300 ${
                   isCurrent
-                    ? "bg-brand-600 text-white"
+                    ? "bg-[#DFD0B8] text-[#222831] shadow-[0_0_18px_rgba(223,208,184,0.35)]"
                     : isActive
-                      ? "bg-green-100 text-green-700"
-                      : "bg-slate-100 text-slate-400"
+                      ? "border border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                      : "border border-[#DFD0B8]/10 bg-[#222831] text-[#948979]"
                 }`}
               >
-                {isActive && !isCurrent ? "✓" : i + 1}
+                {isActive && !isCurrent ? (
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                    aria-hidden
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 011.4-1.4l3.3 3.3 6.8-6.8a1 1 0 011.4 0z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                ) : (
+                  i + 1
+                )}
               </div>
               <span
-                className={`mt-2 text-xs ${
-                  isCurrent ? "font-medium text-slate-800" : "text-slate-500"
+                className={`mt-2 text-[11px] font-medium uppercase tracking-wider transition-colors ${
+                  isCurrent ? "text-[#DFD0B8]" : "text-[#948979]"
                 }`}
               >
                 {s.label}
@@ -468,10 +487,10 @@ function StepIndicator({ current }: { current: OnboardingStep }) {
           );
         })}
       </div>
-      <div className="mt-3 h-1 rounded bg-slate-100">
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#222831]">
         <div
-          className="h-1 rounded bg-brand-600 transition-all"
-          style={{ width: `${(index / (steps.length - 1)) * 100}%` }}
+          className="h-full rounded-full bg-gradient-to-r from-[#948979] to-[#DFD0B8] transition-all duration-500 ease-out"
+          style={{ width: `${progress}%` }}
         />
       </div>
     </div>
@@ -515,18 +534,20 @@ function AuthStep({
 }: AuthStepProps) {
   return (
     <div>
-      <h2 className="mb-2 text-2xl font-bold text-slate-800">Welcome to KnockKnock 👋</h2>
-      <p className="mb-6 text-slate-600">
-        Sign in to create your secure Web3 messaging profile.
+      <h2 className="text-3xl font-bold tracking-tight text-[#DFD0B8] sm:text-4xl">
+        Welcome to KnockKnock
+      </h2>
+      <p className="mt-3 text-sm leading-relaxed text-[#948979]">
+        Sign in to create your secure, privacy-first Web3 messaging profile on Flare.
       </p>
 
       {disabled && disabledReason && (
-        <p className="mb-4 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-700">
+        <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-300">
           {disabledReason}
         </p>
       )}
 
-      <div className="mb-6 grid grid-cols-3 gap-2">
+      <div className="mt-7 grid grid-cols-3 gap-2 rounded-2xl border border-[#DFD0B8]/10 bg-[#222831] p-1.5">
         {(
           [
             ["google", "Google"],
@@ -539,10 +560,10 @@ function AuthStep({
             type="button"
             onClick={() => setMode(key)}
             disabled={disabled}
-            className={`rounded-lg px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${
+            className={`rounded-xl px-3 py-2 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${
               mode === key
-                ? "bg-brand-100 text-brand-700 ring-1 ring-brand-300"
-                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                ? "bg-[#DFD0B8] text-[#222831] shadow-sm"
+                : "text-[#948979] hover:text-[#DFD0B8]"
             }`}
           >
             {label}
@@ -555,7 +576,7 @@ function AuthStep({
           type="button"
           onClick={onGoogleSignIn}
           disabled={disabled}
-          className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white px-5 py-3 font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-5 flex w-full items-center justify-center gap-3 rounded-2xl border border-[#DFD0B8]/15 bg-[#222831] px-5 py-3.5 font-semibold text-[#DFD0B8] shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#DFD0B8]/30 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <span className="text-lg">G</span>
           Sign in with Google
@@ -563,14 +584,14 @@ function AuthStep({
       )}
 
       {mode === "email" && (
-        <form onSubmit={onEmailSignIn} className="flex flex-col gap-4">
+        <form onSubmit={onEmailSignIn} className="mt-5 flex flex-col gap-4">
           <input
             type="email"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <input
@@ -579,13 +600,13 @@ function AuthStep({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <button
             type="submit"
             disabled={disabled}
-            className="rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Sign In
           </button>
@@ -593,14 +614,14 @@ function AuthStep({
       )}
 
       {mode === "signup" && (
-        <form onSubmit={onEmailSignUp} className="flex flex-col gap-4">
+        <form onSubmit={onEmailSignUp} className="mt-5 flex flex-col gap-4">
           <input
             type="text"
             placeholder="Display name"
             value={authName}
             onChange={(e) => setAuthName(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <input
@@ -609,7 +630,7 @@ function AuthStep({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <input
@@ -618,7 +639,7 @@ function AuthStep({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <input
@@ -627,13 +648,13 @@ function AuthStep({
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60"
+            className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3 text-sm text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
             required
           />
           <button
             type="submit"
             disabled={disabled}
-            className="rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Create Account
           </button>
@@ -657,17 +678,22 @@ function UsernameStep({
   onSubmit,
 }: UsernameStepProps) {
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4">
-      <h2 className="text-2xl font-bold text-slate-800">Choose a username</h2>
-      <p className="text-slate-600">
-        This is how other KnockKnock users will see you.
-      </p>
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight text-[#DFD0B8] sm:text-4xl">
+          Choose your handle
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-[#948979]">
+          This is how other KnockKnock users will find and message you. Pick
+          something memorable — it&apos;s yours permanently.
+        </p>
+      </div>
       <input
         type="text"
         placeholder="knock_user"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
-        className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+        className="w-full rounded-xl border border-[#948979]/40 bg-[#222831] px-4 py-3.5 text-base text-[#DFD0B8] placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/40"
         minLength={USERNAME_MIN_LENGTH}
         maxLength={USERNAME_MAX_LENGTH}
         required
@@ -675,7 +701,7 @@ function UsernameStep({
       <button
         type="submit"
         disabled={checking}
-        className="rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {checking ? "Checking..." : "Continue"}
       </button>
@@ -702,19 +728,31 @@ function WalletStep({
   const canLink = address && isCorrectNetwork;
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-2xl font-bold text-slate-800">Connect your Flare wallet</h2>
-      <p className="text-slate-600">
-        Link your MetaMask address to your KnockKnock profile. This address will
-        be used to send and receive private chat requests on Flare Coston2.
-      </p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight text-[#DFD0B8] sm:text-4xl">
+          Connect your Flare wallet
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-[#948979]">
+          Link your MetaMask address to your KnockKnock profile. This address
+          will be used to send and receive private chat requests on Flare Coston2.
+        </p>
+      </div>
 
       {address ? (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-          <p className="text-sm font-medium text-green-800">Wallet connected</p>
-          <p className="mt-1 break-all text-sm text-green-700">{address}</p>
+        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 py-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 animate-pulse-ring" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            </span>
+            Wallet connected
+          </div>
+          <p className="mt-2 break-all font-mono text-xs text-emerald-200/80">
+            {address}
+          </p>
           {!isCorrectNetwork && (
-            <p className="mt-2 text-sm font-semibold text-red-600">
+            <p className="mt-3 text-sm font-semibold text-rose-300">
               Please switch to Flare Coston2 in MetaMask.
             </p>
           )}
@@ -723,7 +761,7 @@ function WalletStep({
         <button
           type="button"
           onClick={onConnect}
-          className="rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700"
+          className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25"
         >
           Connect MetaMask
         </button>
@@ -734,10 +772,10 @@ function WalletStep({
           type="button"
           onClick={onSignAndLink}
           disabled={linking}
-          className="flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[#DFD0B8]/20 bg-[#222831] px-5 py-3.5 font-bold text-[#DFD0B8] shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#DFD0B8]/40 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {linking && (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#DFD0B8] border-t-transparent" />
           )}
           {linking ? "Linking wallet..." : "Sign to link wallet"}
         </button>
@@ -754,22 +792,33 @@ interface VerifyStepProps {
 
 function VerifyStep({ verifying, result, onVerify }: VerifyStepProps) {
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-2xl font-bold text-slate-800">Verify your identity</h2>
-      <p className="text-slate-600">
-        KnockKnock checks your Gitcoin Passport score and wallet age inside the
-        Flare Confidential Compute TEE. No personal data leaves the enclave.
-      </p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight text-[#DFD0B8] sm:text-4xl">
+          Verify your identity
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-[#948979]">
+          KnockKnock checks your Gitcoin Passport score and wallet age inside
+          the Flare Confidential Compute TEE. No personal data leaves the
+          enclave.
+        </p>
+      </div>
 
       {result ? (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-          <div className="flex items-center gap-2 text-green-800">
-            <span>✅ Verified Human</span>
-            <span className="text-sm">{result.isVerifiedHuman ? "Yes" : "No"}</span>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 py-3.5">
+            <span className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+              ✅ Verified Human
+            </span>
+            <span className="text-sm font-bold text-emerald-200">
+              {result.isVerifiedHuman ? "Yes" : "No"}
+            </span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-green-800">
-            <span>✅ Wallet Age</span>
-            <span className="text-sm">
+          <div className="flex items-center justify-between rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 py-3.5">
+            <span className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+              ✅ Wallet Age
+            </span>
+            <span className="text-sm font-bold text-emerald-200">
               {result.isOldEnoughWallet ? "Old enough" : "Too new"}
             </span>
           </div>
@@ -779,10 +828,10 @@ function VerifyStep({ verifying, result, onVerify }: VerifyStepProps) {
           type="button"
           onClick={onVerify}
           disabled={verifying}
-          className="flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-3 font-medium text-white shadow transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {verifying && (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#222831] border-t-transparent" />
           )}
           {verifying ? "Verifying with TEE..." : "Verify Identity"}
         </button>
@@ -793,19 +842,21 @@ function VerifyStep({ verifying, result, onVerify }: VerifyStepProps) {
 
 function CompleteStep({ onComplete }: { onComplete: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-4 text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-green-100 text-4xl">
+    <div className="flex flex-col items-center gap-5 text-center">
+      <div className="animate-pop flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15 text-4xl ring-1 ring-emerald-400/30">
         🎉
       </div>
-      <h2 className="text-2xl font-bold text-slate-800">You&apos;re all set!</h2>
-      <p className="text-slate-600">
+      <h2 className="text-3xl font-bold tracking-tight text-[#DFD0B8] sm:text-4xl">
+        You&apos;re all set!
+      </h2>
+      <p className="max-w-sm text-sm leading-relaxed text-[#948979]">
         Your identity is verified and your profile is ready. Start sending
         private knocks on Flare.
       </p>
       <button
         type="button"
         onClick={onComplete}
-        className="rounded-lg bg-brand-600 px-6 py-3 font-medium text-white shadow transition hover:bg-brand-700"
+        className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-6 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25"
       >
         Start Messaging
       </button>

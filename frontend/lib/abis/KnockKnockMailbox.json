@@ -383,6 +383,82 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_receiver",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_offset",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_limit",
+        "type": "uint256"
+      }
+    ],
+    "name": "getRequestsByReceiver",
+    "outputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "ids",
+        "type": "uint256[]"
+      },
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "sender",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "receiver",
+            "type": "address"
+          },
+          {
+            "internalType": "string",
+            "name": "encryptedPreviewMessage",
+            "type": "string"
+          },
+          {
+            "internalType": "bool",
+            "name": "isVerifiedHuman",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "isOldEnoughWallet",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "accepted",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "isRevealed",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "expirationTime",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct KnockKnockMailbox.ChatRequest[]",
+        "name": "receiverRequests",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "getTotalRequestCount",
     "outputs": [
