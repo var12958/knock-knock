@@ -1,5 +1,6 @@
 {
   "/page": "app/page.js",
   "/send/page": "app/send/page.js",
-  "/onboard/page": "app/onboard/page.js"
+  "/onboard/page": "app/onboard/page.js",
+  "/chat/[requestId]/page": "app/chat/[requestId]/page.js"
 }
