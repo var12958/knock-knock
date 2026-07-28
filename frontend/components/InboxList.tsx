@@ -6,7 +6,7 @@ import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getMailboxContractWrite } from "@/lib/contracts";
 import { decodePreview } from "@/lib/encodePreview";
-import { getNicknames, setNickname } from "@/lib/firebaseContacts";
+import { setNickname, subscribeNicknames } from "@/lib/firebaseContacts";
 import ProofBadge from "./ProofBadge";
 
 interface ChatRequest {
@@ -197,28 +197,26 @@ export default function InboxList({ refreshKey }: InboxListProps) {
     [receiverRequests],
   );
 
-  // Fetch nicknames for the addresses currently in the Chats tab. Runs whenever
-  // the chat set changes; merges results so edits are preserved until a refetch.
+  // Subscribe to the user's entire private nickname address book in real time.
+  // The write path is contacts/${uid}/${senderAddress} (see contactsRef); this
+  // subscribes to the parent contacts/${uid} node and delivers a lowercase-keyed
+  // map on first load and on every change, decoupled from chats loading.
   useEffect(() => {
     if (!user) return;
-    const senders = Array.from(
-      new Set(chats.map((c) => c.sender.toLowerCase())),
-    );
-    if (senders.length === 0) return;
-
-    let cancelled = false;
-    getNicknames(user.uid, senders)
-      .then((fetched) => {
-        if (cancelled) return;
-        setNicknames((prev) => ({ ...prev, ...fetched }));
-      })
-      .catch((err: any) => {
-        console.error("[InboxList] nickname fetch failed:", err);
+    let active = true;
+    try {
+      const unsubscribe = subscribeNicknames(user.uid, (fetched) => {
+        if (!active) return;
+        setNicknames(fetched);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [chats, user]);
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    } catch (err: any) {
+      console.error("[InboxList] nickname subscription failed:", err);
+    }
+  }, [user]);
 
   const handleAccept = useCallback(
     async (requestId: string) => {
@@ -542,7 +540,8 @@ export default function InboxList({ refreshKey }: InboxListProps) {
                       Preview
                     </p>
                     <p className="mt-1 break-words text-base text-[#DFD0B8]">
-                      {decodePreview(req.encryptedPreviewMessage)}
+                      {decodePreview(req.encryptedPreviewMessage) ||
+                        "No preview included with this knock"}
                     </p>
                     {req.isRevealed ? (
                       <p className="mt-2 text-xs text-[#948979]">

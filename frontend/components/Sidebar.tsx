@@ -6,7 +6,7 @@ import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getMailboxContractRead, getMailboxContractWrite } from "@/lib/contracts";
 import { decodePreview } from "@/lib/encodePreview";
-import { getNicknames, setNickname } from "@/lib/firebaseContacts";
+import { setNickname, subscribeNicknames } from "@/lib/firebaseContacts";
 
 interface ChatRequest {
   requestId: string;
@@ -138,27 +138,28 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     void loadRequests();
   }, [address, refreshKey, loadRequests]);
 
-  // Fetch nicknames for the addresses in the Chats section.
+  // Subscribe to the user's entire private nickname address book in real time.
+  // The write path is contacts/${uid}/${senderAddress} (see contactsRef); this
+  // subscribes to the parent contacts/${uid} node and delivers a lowercase-keyed
+  // map on the first load and on every change. This decouples nickname loading
+  // from the on-chain chats loading (which previously gated the fetch) so saved
+  // nicknames reliably appear on the next app load and stay in sync.
   useEffect(() => {
     if (!user) return;
-    const senders = Array.from(
-      new Set(acceptedChats.map((c) => c.sender.toLowerCase())),
-    );
-    if (senders.length === 0) return;
-
-    let cancelled = false;
-    getNicknames(user.uid, senders)
-      .then((fetched) => {
-        if (cancelled) return;
-        setNicknames((prev) => ({ ...prev, ...fetched }));
-      })
-      .catch((err: any) => {
-        console.error("[Sidebar] nickname fetch failed:", err);
+    let active = true;
+    try {
+      const unsubscribe = subscribeNicknames(user.uid, (fetched) => {
+        if (!active) return;
+        setNicknames(fetched);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [acceptedChats, user]);
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    } catch (err: any) {
+      console.error("[Sidebar] nickname subscription failed:", err);
+    }
+  }, [user]);
 
   const handleAccept = useCallback(
     async (requestId: string) => {
@@ -213,7 +214,9 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     setEditSaving(true);
     setEditError(null);
     try {
+      // Writes to contacts/${uid}/${senderAddress.toLowerCase()} (see contactsRef).
       await setNickname(user.uid, editing, trimmed);
+      // Optimistic local update; the onValue subscription above will reconcile.
       setNicknames((prev) => {
         const next = { ...prev };
         const key = editing.toLowerCase();
@@ -238,7 +241,7 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
         </div>
         <p className="text-sm font-semibold text-[#DFD0B8]">Connect wallet</p>
         <p className="text-xs text-[#948979]">
-          Connect MetaMask to view your chats and knocks.
+          Connect your wallet to view your chats and knocks.
         </p>
       </aside>
     );
@@ -347,38 +350,55 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
             {pendingRequests.length > 0 && (
               <>
                 <SectionLabel className="mt-4">Pending</SectionLabel>
-                {pendingRequests.map((req) => (
-                  <div
-                    key={`pending-${req.requestId}`}
-                    className="rounded-xl border border-[#DFD0B8]/10 bg-[#393E46] p-3"
-                  >
-                    <p className="mb-1 truncate text-sm text-[#DFD0B8]">
-                      {decodePreview(req.encryptedPreviewMessage) ||
-                        "Encrypted knock"}
-                    </p>
-                    <p className="mb-2 truncate text-xs text-[#948979]">
-                      Sender address is hidden to protect privacy.
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleAccept(req.requestId)}
-                        disabled={actionId === req.requestId}
-                        className="flex-1 rounded-lg bg-[#DFD0B8] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#DFD0B8]/90 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {actionId === req.requestId ? "..." : "Accept"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleReject(req.requestId)}
-                        disabled={actionId === req.requestId}
-                        className="flex-1 rounded-lg bg-[#948979] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#948979]/80 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {actionId === req.requestId ? "..." : "Reject"}
-                      </button>
+                {pendingRequests.map((req) => {
+                  const preview = decodePreview(req.encryptedPreviewMessage);
+                  return (
+                    <div
+                      key={`pending-${req.requestId}`}
+                      className="rounded-xl border border-[#DFD0B8]/10 bg-[#393E46] p-3"
+                    >
+                      {/* Preview message — rendered prominently so the user can
+                          decide whether to accept or reject the knock. */}
+                      <div className="mb-2 flex items-start gap-3 rounded-lg border border-[#948979]/20 bg-[#222831] p-3">
+                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-base">
+                          ❓
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#948979]">
+                            Preview
+                          </p>
+                          <p className="mt-0.5 break-words text-sm font-medium text-[#DFD0B8]">
+                            {preview || "No preview included with this knock"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="mb-2 truncate text-xs text-[#948979]">
+                        {req.isRevealed
+                          ? `Sender: ${shortenAddress(req.sender)}`
+                          : "Sender address is hidden to protect privacy."}
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAccept(req.requestId)}
+                          disabled={actionId === req.requestId}
+                          className="flex-1 rounded-lg bg-[#DFD0B8] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#DFD0B8]/90 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {actionId === req.requestId ? "..." : "Accept"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleReject(req.requestId)}
+                          disabled={actionId === req.requestId}
+                          className="flex-1 rounded-lg bg-[#948979] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#948979]/80 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {actionId === req.requestId ? "..." : "Reject"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
 

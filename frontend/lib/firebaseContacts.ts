@@ -1,6 +1,6 @@
 "use client";
 
-import { ref, get, set } from "firebase/database";
+import { ref, get, set, onValue, type Unsubscribe } from "firebase/database";
 import { realtimeDb } from "./firebase";
 
 /**
@@ -69,4 +69,46 @@ export async function setNickname(
   const trimmed = nickname.trim();
   // `set` with null removes the node, keeping the address book clean.
   await set(contactsRef(uid, senderAddress), trimmed || null);
+}
+
+/**
+ * Subscribe to the user's entire private address book in real time.
+ *
+ * The per-contact write path is `contacts/${uid}/${senderAddress}` (see
+ * `contactsRef`). This subscribes to the parent `contacts/${uid}` node and
+ * delivers a map keyed by lowercase sender address whenever the DB changes —
+ * including on the very first load. Using `onValue` (instead of a one-shot
+ * `get()` keyed off the chat list) means nicknames populate as soon as the
+ * user is authenticated, independent of when the on-chain chats finish
+ * loading, and stay in sync across reloads/tabs/edits.
+ *
+ * Returns an unsubscribe function.
+ */
+export function subscribeNicknames(
+  uid: string,
+  onChange: (nicknames: Record<string, string>) => void,
+): Unsubscribe {
+  if (!realtimeDb) {
+    throw new Error("Firebase Database is not configured.");
+  }
+  const nodeRef = ref(realtimeDb, `contacts/${uid}`);
+  return onValue(
+    nodeRef,
+    (snapshot) => {
+      const value = snapshot.val() as Record<string, string> | null;
+      const result: Record<string, string> = {};
+      if (value && typeof value === "object") {
+        for (const [address, nickname] of Object.entries(value)) {
+          if (typeof nickname === "string" && nickname.trim()) {
+            result[address.toLowerCase()] = nickname.trim();
+          }
+        }
+      }
+      onChange(result);
+    },
+    (err) => {
+      // Surface subscription errors so they are not silently swallowed.
+      console.error("[firebaseContacts] nickname subscription error:", err);
+    },
+  );
 }

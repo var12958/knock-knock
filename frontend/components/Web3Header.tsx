@@ -129,7 +129,7 @@ export default function Web3Header() {
               disabled={isConnecting}
               className="rounded-2xl bg-[#DFD0B8] px-6 py-2.5 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/10 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/20 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isConnecting ? "Connecting..." : "Connect MetaMask"}
+              {isConnecting ? "Connecting..." : "Connect Wallet"}
             </button>
           )}
         </div>
