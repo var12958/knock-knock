@@ -49,6 +49,7 @@ import {
   linkWalletHandler,
   publishChatRequestHandler,
   verifyFCCOnboardingHandler,
+  switchLinkedWalletHandler,
   validateUsername,
   normalizeUsername,
   assertProfileWalletMatches,
@@ -346,10 +347,11 @@ describe("publishChatRequestHandler", () => {
     );
   });
 
-  it("rejects when the receiver wallet is not linked", async () => {
+  it("saves the request even when the receiver wallet is not linked", async () => {
     const sender = "0x1234567890123456789012345678901234567890";
     const receiver = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
     const txHash = "0x" + "a".repeat(64);
+    const requestId = 1n;
 
     getMock.mockImplementation((path: string) => {
       if (path === "users/test-uid") {
@@ -358,12 +360,28 @@ describe("publishChatRequestHandler", () => {
       return { exists: () => false, val: () => null };
     });
     getTransactionReceiptSpy.mockResolvedValue(
-      makeRequestSentReceipt(1n, sender, receiver),
+      makeRequestSentReceipt(requestId, sender, receiver),
     );
 
-    await expect(
-      publishChatRequestHandler(makeRequest({ txHash })),
-    ).rejects.toThrow(/Receiver wallet is not linked/);
+    const result = await publishChatRequestHandler(makeRequest({ txHash }));
+
+    expect(result).toEqual({
+      success: true,
+      requestId: requestId.toString(),
+      receiverUid: undefined,
+    });
+    const savedCall = setMock.mock.calls.find(
+      ([path]) => path === `requests/${requestId.toString()}`,
+    );
+    expect(savedCall).toBeDefined();
+    const savedValue = savedCall?.[1] as Record<string, unknown>;
+    expect(savedValue).toMatchObject({
+      senderUid: "test-uid",
+      senderAddress: sender,
+      receiverAddress: ethers.getAddress(receiver),
+      createdAt: expect.any(Number),
+    });
+    expect(savedValue).not.toHaveProperty("receiverUid");
   });
 });
 
@@ -502,5 +520,197 @@ describe("assertProfileWalletMatches", () => {
         "0x1234567890123456789012345678901234567890",
       ),
     ).not.toThrow();
+  });
+});
+
+describe("switchLinkedWalletHandler", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    getTransactionReceiptSpy.mockReset();
+    contractRequestsSpy.mockReset();
+    transactionMock.mockReset();
+  });
+
+  function mockVerifiedProfile(walletAddress: string) {
+    getMock.mockImplementation((path: string) => {
+      if (path === "users/test-uid") {
+        return {
+          exists: () => true,
+          val: () => ({
+            uid: "test-uid",
+            username: "test",
+            walletAddress,
+            verifiedAt: Date.now(),
+            isVerifiedHuman: true,
+            isOldEnoughWallet: true,
+          }),
+        };
+      }
+      return { exists: () => false, val: () => null };
+    });
+  }
+
+  function mockSwitchTransaction(opts: { newAddressTakenBy?: string } = {}) {
+    transactionMock.mockImplementation(async (updateFn: any) => {
+      const currentData: Record<string, unknown> = {
+        users: {
+          "test-uid": {
+            uid: "test-uid",
+            username: "test",
+            walletAddress: "0x1234567890123456789012345678901234567890",
+            verifiedAt: Date.now(),
+            isVerifiedHuman: true,
+            isOldEnoughWallet: true,
+          },
+        },
+        walletAddresses: {
+          "0x1234567890123456789012345678901234567890": { uid: "test-uid", linkedAt: Date.now() },
+        },
+      };
+      if (opts.newAddressTakenBy) {
+        const newWalletAddress = (await TEST_WALLET.getAddress()).toLowerCase();
+        (currentData["walletAddresses"] as Record<string, unknown>)[newWalletAddress] = {
+          uid: opts.newAddressTakenBy,
+          linkedAt: Date.now(),
+        };
+      }
+      const result = updateFn(currentData);
+      if (result === undefined) {
+        return { committed: false, snapshot: { val: () => currentData } };
+      }
+      return { committed: true, snapshot: { val: () => result } };
+    });
+  }
+
+  it("rejects unauthenticated callers", async () => {
+    await expect(
+      switchLinkedWalletHandler({
+        auth: undefined,
+        data: { walletAddress: "0x" + "1".repeat(40), signature: "0x", txHash: "0x" + "a".repeat(64) },
+        rawRequest: {} as any,
+        instanceIdToken: "",
+        app: {} as any,
+        id: "test-id",
+      }),
+    ).rejects.toThrow(HttpsError);
+  });
+
+  it("rejects when the profile is missing", async () => {
+    getMock.mockResolvedValue({ exists: () => false, val: () => null });
+
+    await expect(
+      switchLinkedWalletHandler(
+        makeRequest({ walletAddress: "0x" + "1".repeat(40), signature: "0x", txHash: "0x" + "a".repeat(64) }),
+      ),
+    ).rejects.toThrow(/profile not found/);
+  });
+
+  it("rejects when the profile has not been verified", async () => {
+    getMock.mockImplementation((path: string) => {
+      if (path === "users/test-uid") {
+        return {
+          exists: () => true,
+          val: () => ({
+            uid: "test-uid",
+            username: "test",
+            walletAddress: "0x1234567890123456789012345678901234567890",
+            verifiedAt: null,
+          }),
+        };
+      }
+      return { exists: () => false, val: () => null };
+    });
+
+    await expect(
+      switchLinkedWalletHandler(
+        makeRequest({ walletAddress: "0x" + "1".repeat(40), signature: "0x", txHash: "0x" + "a".repeat(64) }),
+      ),
+    ).rejects.toThrow(/verified before switching/);
+  });
+
+  it("rejects a mismatched signature", async () => {
+    const newWalletAddress = await TEST_WALLET.getAddress();
+    mockVerifiedProfile("0x1234567890123456789012345678901234567890");
+
+    const otherWallet = new ethers.Wallet(
+      "0x0000000000000000000000000000000000000000000000000000000000000002",
+    );
+    const signature = await otherWallet.signMessage("wrong message");
+
+    await expect(
+      switchLinkedWalletHandler(
+        makeRequest({ walletAddress: newWalletAddress, signature, txHash: "0x" + "a".repeat(64) }),
+      ),
+    ).rejects.toThrow(/does not match/);
+  });
+
+  it("rejects when the new wallet is already linked to another profile", async () => {
+    const newWalletAddress = await TEST_WALLET.getAddress();
+    const receiver = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    const txHash = "0x" + "a".repeat(64);
+    const requestId = 888n;
+    const message = `Switch wallet to ${newWalletAddress.toLowerCase()} for KnockKnock account test-uid`;
+    const signature = await TEST_WALLET.signMessage(message);
+
+    mockVerifiedProfile("0x1234567890123456789012345678901234567890");
+    mockSwitchTransaction({ newAddressTakenBy: "other-uid" });
+    getTransactionReceiptSpy.mockResolvedValue(
+      makeRequestSentReceipt(requestId, newWalletAddress, receiver),
+    );
+    contractRequestsSpy.mockResolvedValue({
+      sender: newWalletAddress,
+      receiver,
+      encryptedPreviewMessage: "0x",
+      isVerifiedHuman: true,
+      isOldEnoughWallet: true,
+      accepted: false,
+      isRevealed: false,
+      expirationTime: 0n,
+    });
+
+    await expect(
+      switchLinkedWalletHandler(
+        makeRequest({ walletAddress: newWalletAddress, signature, txHash }),
+      ),
+    ).rejects.toThrow(/Wallet switch conflict/);
+  });
+
+  it("switches the linked wallet after a valid verification transaction", async () => {
+    const oldWalletAddress = "0x1234567890123456789012345678901234567890";
+    const newWalletAddress = await TEST_WALLET.getAddress();
+    const receiver = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    const txHash = "0x" + "a".repeat(64);
+    const requestId = 777n;
+
+    const message = `Switch wallet to ${newWalletAddress.toLowerCase()} for KnockKnock account test-uid`;
+    const signature = await TEST_WALLET.signMessage(message);
+
+    mockVerifiedProfile(oldWalletAddress);
+    mockSwitchTransaction();
+    getTransactionReceiptSpy.mockResolvedValue(
+      makeRequestSentReceipt(requestId, newWalletAddress, receiver),
+    );
+    contractRequestsSpy.mockResolvedValue({
+      sender: newWalletAddress,
+      receiver,
+      encryptedPreviewMessage: "0x",
+      isVerifiedHuman: true,
+      isOldEnoughWallet: true,
+      accepted: false,
+      isRevealed: false,
+      expirationTime: 0n,
+    });
+
+    const result = await switchLinkedWalletHandler(
+      makeRequest({ walletAddress: newWalletAddress, signature, txHash }),
+    );
+
+    expect(result).toEqual({
+      success: true,
+      walletAddress: newWalletAddress,
+      isVerifiedHuman: true,
+      isOldEnoughWallet: true,
+    });
+    expect(transactionMock).toHaveBeenCalledOnce();
   });
 });

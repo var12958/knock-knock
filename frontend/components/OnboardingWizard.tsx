@@ -12,6 +12,8 @@ import {
 } from "@/lib/firebaseFunctions";
 import { runFCCVerification } from "@/lib/runFCCVerification";
 import { COSTON2_CHAIN_ID } from "@/lib/chain";
+import { AnimatePresence } from "framer-motion";
+import VerificationLoader from "@/components/VerificationLoader";
 
 const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 24;
@@ -243,43 +245,84 @@ export default function OnboardingWizard() {
   async function handleConnectWallet() {
     clearError();
     if (!user) {
+      console.log("[OnboardingWizard] handleConnectWallet: no Firebase user");
       setError("You must be signed in to link a wallet.");
       return;
     }
+    console.log("[OnboardingWizard] handleConnectWallet: calling connect()");
     try {
       await connect();
+      console.log("[OnboardingWizard] handleConnectWallet: connect() resolved");
     } catch (err: any) {
+      console.error("[OnboardingWizard] handleConnectWallet: connect() failed", err);
       setError(err.message ?? "Wallet connection failed.");
     }
   }
 
   async function handleSignAndLinkWallet() {
     clearError();
+    console.log("[OnboardingWizard] handleSignAndLinkWallet: started", {
+      uid: user?.uid,
+      address,
+      hasSigner: !!signer,
+    });
+
     if (!user || !address || !signer) {
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: missing user/address/signer");
       setError("Please connect your wallet before linking.");
       return;
     }
 
     setLinkingWallet(true);
     try {
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: fetching user profile");
       const profile = await getUserProfile(user.uid);
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: profile loaded", {
+        profileWallet: profile?.walletAddress ?? null,
+        currentAddress: address,
+      });
+
       if (profile?.walletAddress) {
         if (profile.walletAddress.toLowerCase() !== address.toLowerCase()) {
+          console.log("[OnboardingWizard] handleSignAndLinkWallet: address mismatch");
           setError(
             `This account is already linked to ${shortenAddress(profile.walletAddress)}. Switch MetaMask to that account, or sign in with a different Firebase account.`,
           );
           return;
         }
+        console.log("[OnboardingWizard] handleSignAndLinkWallet: wallet already linked to this address -> advance to verify");
         setStep("verify");
         return;
       }
 
       const message = `Link wallet ${address.toLowerCase()} to KnockKnock account ${user.uid}`;
-      const signature = await signer.signMessage(message);
-      await linkWallet({ walletAddress: address, signature });
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: requesting MetaMask signature", { message });
+      let signature: string;
+      try {
+        signature = await signer.signMessage(message);
+      } catch (signErr: any) {
+        console.error("[OnboardingWizard] handleSignAndLinkWallet: MetaMask sign rejected", signErr);
+        setError(signErr.message ?? "Signature rejected in MetaMask.");
+        return;
+      }
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: MetaMask signature received", {
+        signatureLength: signature.length,
+      });
+
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: calling linkWallet Cloud Function");
+      const result = await linkWallet({ walletAddress: address, signature });
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: linkWallet returned", result);
+
+      if (!result?.success) {
+        console.error("[OnboardingWizard] handleSignAndLinkWallet: linkWallet returned success=false");
+        setError("Wallet linking was not accepted by the server.");
+        return;
+      }
+
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: advancing to verify step");
       setStep("verify");
     } catch (err: any) {
-      console.error("Failed to link wallet:", err);
+      console.error("[OnboardingWizard] handleSignAndLinkWallet: unexpected error", err);
       if (err?.code === "functions/permission-denied") {
         setError("Signature verification failed. Please sign with the connected account.");
       } else if (err?.code === "functions/already-exists") {
@@ -288,6 +331,7 @@ export default function OnboardingWizard() {
         setError(err.message ?? "Failed to link wallet.");
       }
     } finally {
+      console.log("[OnboardingWizard] handleSignAndLinkWallet: finally -> setLinkingWallet(false)");
       setLinkingWallet(false);
     }
   }
@@ -342,6 +386,7 @@ export default function OnboardingWizard() {
         return;
       }
 
+      // Identity verified — onboarding is complete. Route to the dashboard.
       setStep("complete");
     } catch (err: any) {
       console.error("Verification failed:", err);
@@ -352,7 +397,7 @@ export default function OnboardingWizard() {
   }
 
   function handleComplete() {
-    router.replace("/send");
+    router.replace("/");
   }
 
   const displayedError = error || authError;
@@ -364,6 +409,7 @@ export default function OnboardingWizard() {
       : null;
 
   return (
+    <>
     <div className="mx-auto max-w-2xl rounded-3xl border border-[#DFD0B8]/10 bg-[#393E46]/80 p-8 shadow-2xl shadow-black/30 backdrop-blur-sm sm:p-10">
       <StepIndicator current={step} />
 
@@ -427,6 +473,17 @@ export default function OnboardingWizard() {
         </div>
       )}
     </div>
+
+    <AnimatePresence>
+      {(verifying || step === "complete") && (
+        <VerificationLoader
+          key="verification-loader"
+          isSuccess={step === "complete"}
+          onComplete={handleComplete}
+        />
+      )}
+    </AnimatePresence>
+    </>
   );
 }
 
@@ -863,3 +920,4 @@ function CompleteStep({ onComplete }: { onComplete: () => void }) {
     </div>
   );
 }
+

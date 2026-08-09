@@ -11,6 +11,9 @@ import {
   VERSION,
   OP_TYPE_KNOCKKNOCK,
   OP_COMMAND_VERIFY_SENDER,
+  OP_COMMAND_VERIFY_TWITTER,
+  OP_COMMAND_CHECK_ML_BEHAVIOR,
+  ML_BEHAVIOR_MODEL_VERSION,
   MIN_WALLET_AGE_SECONDS,
   HUMANITY_SCORE_THRESHOLD,
   FLARE_RPC_URL,
@@ -20,6 +23,12 @@ import {
   PASSPORT_SUBMIT_URL,
   IDENTITY_API_URL,
   TEE_SIGNER_PRIVATE_KEY,
+  FDC_VERIFIER_URL,
+  TWITTER_BEARER_TOKEN,
+  TWITTER_API_BASE_URL,
+  FDC_MOCK_TWITTER,
+  FDC_POLL_INTERVAL_MS,
+  FDC_POLL_MAX_ATTEMPTS,
 } from "./config.js";
 import type { Framework } from "../base/types.js";
 import type {
@@ -27,7 +36,18 @@ import type {
   VerifySenderResponse,
   IdentityScoreResponse,
   PassportScoreResponse,
+  TwitterVerificationRequest,
+  TwitterVerificationResponse,
+  FdcWeb2JsonRequest,
+  FdcAttestationStatus,
+  MlBehaviorRequest,
+  MlBehaviorResponse,
 } from "./types.js";
+import {
+  analyzeWalletBehavior,
+  predictBotProbability,
+  generateExplanation,
+} from "./mlBehavior.js";
 
 let signer: ethers.SigningKey | null = null;
 
@@ -44,6 +64,16 @@ export function register(framework: Framework): void {
     setSigner(TEE_SIGNER_PRIVATE_KEY);
   }
   framework.handle(OP_TYPE_KNOCKKNOCK, OP_COMMAND_VERIFY_SENDER, handleVerifySender);
+  framework.handle(
+    OP_TYPE_KNOCKKNOCK,
+    OP_COMMAND_VERIFY_TWITTER,
+    handleVerifyTwitter,
+  );
+  framework.handle(
+    OP_TYPE_KNOCKKNOCK,
+    OP_COMMAND_CHECK_ML_BEHAVIOR,
+    handleCheckMlBehavior,
+  );
 }
 
 export function reportState(): unknown {
@@ -465,3 +495,442 @@ async function fetchLegacyIdentityScore(address: string): Promise<boolean> {
     clearTimeout(timeout);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Twitter verification via the Flare Data Connector (FDC)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @notice TEE handler for VERIFY_TWITTER.
+ * @dev Receives `(address, twitterHandle)` as a private input, requests a
+ *      Web2Json attestation from the Flare Data Connector against the Twitter
+ *      v2 API, polls for the Merkle proof, and returns whether the handle is
+ *      a verified account. The wallet address is used only to bind the proof
+ *      and is never written to any public output.
+ */
+async function handleVerifyTwitter(
+  msg: string,
+): Promise<[string | null, number, string | null]> {
+  let request: TwitterVerificationRequest;
+  try {
+    request = decodeTwitterRequest(msg);
+  } catch (err) {
+    return [null, 0, `decoding twitter request: ${err}`];
+  }
+
+  const handle = normalizeTwitterHandle(request.twitterHandle);
+  if (!handle) {
+    return [null, 0, "twitter handle is required"];
+  }
+  if (!ethers.isAddress(request.address)) {
+    return [null, 0, "invalid sender address"];
+  }
+
+  let isTwitterVerified: boolean;
+  let attestationId: string;
+  try {
+    [isTwitterVerified, attestationId] = await checkTwitterVerification(
+      request.address,
+      handle,
+    );
+  } catch (err) {
+    return [null, 0, `twitter verification failed: ${err}`];
+  }
+
+  const response: TwitterVerificationResponse = {
+    isTwitterVerified,
+    twitterHandle: handle,
+    attestationId,
+  };
+
+  try {
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bool", "string", "string"],
+      [response.isTwitterVerified, response.twitterHandle, response.attestationId],
+    );
+    return [encoded, 1, null];
+  } catch (err) {
+    return [null, 0, `encoding twitter response: ${err}`];
+  }
+}
+
+function decodeTwitterRequest(msg: string): TwitterVerificationRequest {
+  if (!msg || msg === "0x") {
+    throw new Error("originalMessage is empty");
+  }
+  const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+    ["address", "string"],
+    msg,
+  ) as unknown as [string, string];
+  return { address: decoded[0], twitterHandle: decoded[1] };
+}
+
+/** Strip a leading @ and surrounding whitespace; lowercase for lookups. */
+function normalizeTwitterHandle(handle: string): string {
+  const trimmed = handle.trim().replace(/^@+/, "").toLowerCase();
+  if (!/^[a-z0-9_]{1,15}$/.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+/**
+ * @notice Verify a Twitter handle via the Flare Data Connector.
+ * @dev Constructs a Web2Json attestation request whose API URL points at the
+ *      Twitter v2 user-lookup endpoint, with a JMESPath rule that extracts the
+ *      `verified` boolean from the response. The request is submitted to the
+ *      FDC Verifier API and polled until the Merkle proof is available. When
+ *      no FDC verifier or Twitter bearer token is configured (or FDC_MOCK_TWITTER
+ *      is set), a deterministic mock is used so the hackathon demo works
+ *      end-to-end without live credentials.
+ * @returns A tuple of `[isTwitterVerified, attestationId]`.
+ */
+export async function checkTwitterVerification(
+  address: string,
+  twitterHandle: string,
+): Promise<[boolean, string]> {
+  const handle = normalizeTwitterHandle(twitterHandle);
+  if (!handle) {
+    throw new Error("invalid twitter handle");
+  }
+
+  // Mock mode: no live FDC/Twitter credentials available.
+  if (FDC_MOCK_TWITTER || !FDC_VERIFIER_URL || !TWITTER_BEARER_TOKEN) {
+    return mockTwitterVerification(address, handle);
+  }
+
+  const fdcRequest = buildTwitterFdcRequest(handle);
+  const attestationId = await submitFdcAttestation(fdcRequest);
+  const encodedData = await pollFdcAttestation(attestationId);
+  const isTwitterVerified = decodeTwitterVerifiedFromFdc(encodedData);
+  return [isTwitterVerified, attestationId];
+}
+
+/**
+ * @notice Build the Web2Json attestation request for a Twitter v2 user lookup.
+ * @dev The JMESPath expression `data.verified` selects the `verified` boolean
+ *      from the Twitter `GET /2/users/by/username/:username` response. To gate
+ *      on a minimum follower count instead, swap the expression for
+ *      `data.public_metrics.followers_count` and change the decoder.
+ */
+function buildTwitterFdcRequest(handle: string): FdcWeb2JsonRequest {
+  const url = `${TWITTER_API_BASE_URL.replace(/\/$/, "")}/users/by/username/${encodeURIComponent(
+    handle,
+  )}?user.fields=public_metrics,verified`;
+
+  return {
+    attestationType: "Web2Json",
+    sourceId: "twitter",
+    requestId: 0,
+    data: {
+      url,
+      headers: JSON.stringify({
+        Authorization: `Bearer ${TWITTER_BEARER_TOKEN}`,
+      }),
+      postParameters: "",
+      body: "",
+      responseType: "string",
+      httpMethod: "GET",
+      // Pull the verified boolean straight out of the Twitter payload.
+      jmespathExpression: "data.verified",
+    },
+  };
+}
+
+/**
+ * @notice Submit an FDC Web2Json attestation request to the Verifier API.
+ * @dev The verifier accepts the unencoded request object and returns a
+ *      request/attestation id used for status polling.
+ */
+async function submitFdcAttestation(
+  request: FdcWeb2JsonRequest,
+): Promise<string> {
+  const endpoint = `${FDC_VERIFIER_URL.replace(/\/$/, "")}/verifier/api/0.1/Attestation/post`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`FDC submit returned ${response.status}: ${text}`);
+    }
+
+    let body: { attestationId?: string; requestHash?: string; error?: string };
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error(`FDC submit returned non-JSON: ${text}`);
+    }
+
+    if (body.error) {
+      throw new Error(`FDC submit error: ${body.error}`);
+    }
+
+    const attestationId = body.attestationId ?? body.requestHash;
+    if (!attestationId) {
+      throw new Error("FDC submit did not return an attestation id");
+    }
+    console.log(`[FDC] submitted twitter attestation: ${attestationId}`);
+    return attestationId;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * @notice Poll the FDC Verifier until the attestation is finalized.
+ * @returns The ABI-encoded attestation response (the Merkle-proven payload).
+ */
+async function pollFdcAttestation(attestationId: string): Promise<string> {
+  const endpoint = `${FDC_VERIFIER_URL.replace(/\/$/, "")}/verifier/api/0.1/Attestation/status/${encodeURIComponent(
+    attestationId,
+  )}`;
+
+  for (let attempt = 0; attempt < FDC_POLL_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`FDC status returned ${response.status}: ${text}`);
+      }
+
+      const body = (await response.json()) as FdcAttestationStatus;
+
+      if (body.status === "REJECTED") {
+        throw new Error(`FDC attestation rejected: ${body.error ?? body.message ?? "unknown"}`);
+      }
+      if (body.status === "DONE") {
+        const encodedData = body.response?.encodedData;
+        if (!encodedData) {
+          throw new Error("FDC attestation completed without encoded data");
+        }
+        console.log(`[FDC] twitter attestation finalized on attempt ${attempt + 1}`);
+        return encodedData;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    console.log(
+      `[FDC] twitter attestation pending (attempt ${attempt + 1}/${FDC_POLL_MAX_ATTEMPTS}); sleeping ${FDC_POLL_INTERVAL_MS}ms`,
+    );
+    await sleep(FDC_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("timed out waiting for the FDC twitter attestation");
+}
+
+/**
+ * @notice Decode the FDC Web2Json response into a `verified` boolean.
+ * @dev A Web2Json attestation response wraps the JMESPath-extracted value as a
+ *      string inside the encoded data. We decode defensively: the extracted
+ *      value is the trailing string segment of the ABI-encoded response. This
+ *      tolerates version differences in the FDC envelope while still resolving
+ *      "true"/"false"/"1"/"0" to a boolean.
+ */
+function decodeTwitterVerifiedFromFdc(encodedData: string): boolean {
+  try {
+    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["bytes"],
+      encodedData,
+    ) as unknown as [string];
+    const inner = decoded[0];
+    // The inner bytes are themselves ABI-encoded; the last string slot holds
+    // the JMESPath result ("true" / "false").
+    const tail = ethers.hexlify(inner).slice(2);
+    const ascii = Buffer.from(tail, "hex").toString("utf-8").trim();
+    const lastToken = ascii.split(/ |"/).filter(Boolean).pop() ?? "";
+    return lastToken.toLowerCase() === "true" || lastToken === "1";
+  } catch (err) {
+    console.error(`[FDC] failed to decode verified flag: ${err}`);
+    throw new Error(`FDC twitter response was not decodable: ${err}`);
+  }
+}
+
+/**
+ * @notice Deterministic mock used when no live FDC/Twitter credentials exist.
+ * @dev Returns true for plausible handles and false for obvious spam handles,
+ *      so the onboarding demo exercises both badge states without external
+ *      dependencies. Replace with the real FDC path by setting FDC_VERIFIER_URL
+ *      and TWITTER_BEARER_TOKEN (and unsetting FDC_MOCK_TWITTER).
+ */
+function mockTwitterVerification(
+  address: string,
+  handle: string,
+): [boolean, string] {
+  const spamPrefixes = ["bot", "spam", "fake", "scam"];
+  const isSpam = spamPrefixes.some((p) => handle.startsWith(p));
+  const isTwitterVerified = !isSpam && handle.length >= 2;
+  const attestationId = ethers.id(
+    `mock-twitter-${address.toLowerCase()}-${handle}-${Date.now()}`,
+  );
+  console.log(
+    `[FDC mock] twitter verified=${isTwitterVerified} for handle=${handle} address=${address}`,
+  );
+  return [isTwitterVerified, attestationId];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/* ------------------------------------------------------------------ */
+/* ML-powered on-chain behavioral Sybil detection                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @notice TEE handler for CHECK_ML_BEHAVIOR.
+ * @dev Receives an ABI-encoded `targetAddress`, analyzes the wallet's recent
+ *      on-chain behavior, runs a heuristic Random-Forest/Isolation-Forest model
+ *      inside the enclave, and returns a signed human/bot probability with
+ *      explainable factors.
+ */
+async function handleCheckMlBehavior(
+  msg: string,
+): Promise<[string | null, number, string | null]> {
+  if (signer === null) {
+    return [null, 0, "TEE signer not configured"];
+  }
+
+  let request: MlBehaviorRequest;
+  try {
+    request = decodeMlBehaviorRequest(msg);
+  } catch {
+    return [null, 0, "invalid ML behavior request"];
+  }
+
+  if (!ethers.isAddress(request.targetAddress)) {
+    return [null, 0, "invalid target address"];
+  }
+
+  let features: number[];
+  try {
+    features = await analyzeWalletBehavior(request.targetAddress);
+  } catch {
+    return [null, 0, "behavior analysis failed"];
+  }
+
+  const { botProbability, humanProbability } = predictBotProbability(features);
+  const explanation = generateExplanation(features, botProbability);
+
+  // Derive one probability from the other after rounding so they always sum
+  // to exactly the basis-point scale (10_000).
+  const botBp = Math.round(botProbability * BASIS_POINTS);
+  const humanBp = BASIS_POINTS - botBp;
+
+  const signerAddress = ethers.computeAddress(signer.publicKey);
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const explanationHash = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["string[]"], [explanation]),
+  );
+
+  const signedHash = ethers.keccak256(
+    ethers.solidityPacked(
+      [
+        "bytes32",
+        "bytes32",
+        "uint256",
+        "uint256",
+        "address",
+        "address",
+        "string",
+        "uint256",
+        "bytes32",
+      ],
+      [
+        ethers.encodeBytes32String(OP_TYPE_KNOCKKNOCK),
+        ethers.encodeBytes32String(OP_COMMAND_CHECK_ML_BEHAVIOR),
+        humanBp,
+        botBp,
+        request.targetAddress,
+        signerAddress,
+        ML_BEHAVIOR_MODEL_VERSION,
+        timestamp,
+        explanationHash,
+      ],
+    ),
+  );
+
+  let signature: string;
+  try {
+    signature = signDigest(signer, signedHash);
+  } catch {
+    return [null, 0, "signing ML behavior result failed"];
+  }
+
+  const response: MlBehaviorResponse = {
+    humanProbability: humanBp,
+    botProbability: botBp,
+    explanation,
+    modelVersion: ML_BEHAVIOR_MODEL_VERSION,
+    targetAddress: request.targetAddress,
+    signerAddress,
+    timestamp,
+    signature,
+  };
+
+  try {
+    const encoded = encodeMlBehaviorResponse(response);
+    return [encoded, 1, null];
+  } catch {
+    return [null, 0, "encoding ML behavior response failed"];
+  }
+}
+
+function decodeMlBehaviorRequest(msg: string): MlBehaviorRequest {
+  if (!msg || msg === "0x") {
+    throw new Error("originalMessage is empty");
+  }
+  const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+    ["address"],
+    msg,
+  ) as unknown as [string];
+  return { targetAddress: decoded[0] };
+}
+
+function encodeMlBehaviorResponse(response: MlBehaviorResponse): string {
+  return ethers.AbiCoder.defaultAbiCoder().encode(
+    [
+      "uint256",
+      "uint256",
+      "string[]",
+      "string",
+      "address",
+      "address",
+      "uint256",
+      "bytes",
+    ],
+    [
+      response.humanProbability,
+      response.botProbability,
+      response.explanation,
+      response.modelVersion,
+      response.targetAddress,
+      response.signerAddress,
+      response.timestamp,
+      response.signature,
+    ],
+  );
+}
+
+/** Basis-point scale used for probabilities returned to the client. */
+const BASIS_POINTS = 10_000;

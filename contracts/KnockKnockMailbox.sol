@@ -277,6 +277,9 @@ contract KnockKnockMailbox is Ownable, ReentrancyGuard {
         requestId = nextRequestId;
         nextRequestId++;
 
+        // IMPORTANT: the request is always mapped to the _receiver argument,
+        // not to msg.sender. This guarantees that sendRequestWithProof and
+        // sendRequest both store the request in the correct receiver's inbox.
         requests[requestId] = ChatRequest({
             sender: msg.sender,
             receiver: _receiver,

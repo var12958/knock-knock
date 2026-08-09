@@ -2,8 +2,12 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
-import { COSTON2_CHAIN_ID, COSTON2_CONFIG } from "@/lib/chain";
+import { COSTON2_ADD_PROMPT, COSTON2_CONFIG } from "@/lib/chain";
 import WalletSelectionModal, { WalletChoice } from "@/components/WalletSelectionModal";
+import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
+import { getUserProfile } from "@/lib/firebaseProfile";
+import { runFCCVerification } from "@/lib/runFCCVerification";
+import { switchLinkedWallet } from "@/lib/firebaseFunctions";
 
 /**
  * Minimal EIP-1193 provider shape we rely on. Real injected providers
@@ -61,6 +65,7 @@ interface Web3State {
   signer: ethers.JsonRpcSigner | null;
   provider: ethers.BrowserProvider | null;
   isConnecting: boolean;
+  isSwitchingAccount: boolean;
   error: string | null;
   /**
    * Default connect. If both MetaMask and Phantom are installed, opens the
@@ -189,11 +194,14 @@ function detectWallets(): DetectedWallet[] {
 }
 
 export function Web3Provider({ children }: { children: React.ReactNode }) {
+  const { user } = useFirebaseAuth();
+
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
   const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // The raw EIP-1193 provider the user actually connected with. Kept in state
@@ -214,6 +222,7 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
     setAddress(null);
     setChainId(null);
     setError(null);
+    setIsSwitchingAccount(false);
   }
 
   /**
@@ -231,10 +240,18 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
         // Code 4902 means the chain has not been added to the wallet yet.
         const code = (switchError as { code?: number })?.code;
         if (code === 4902) {
-          await ethProvider.request({
-            method: "wallet_addEthereumChain",
-            params: [COSTON2_CONFIG],
-          });
+          try {
+            await ethProvider.request({
+              method: "wallet_addEthereumChain",
+              params: [COSTON2_CONFIG],
+            });
+          } catch (addError: unknown) {
+            // The wallet could not (or the user declined to) add Coston2.
+            // Do NOT surface the raw RPC error — set a warm, actionable message
+            // that propagates up to the connect() catch and into the UI banner.
+            console.error("[Web3Context] wallet_addEthereumChain failed:", addError);
+            throw new Error(COSTON2_ADD_PROMPT);
+          }
         } else {
           throw switchError;
         }
@@ -455,6 +472,11 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
       // discarded if a newer event arrives.
       const currentSwitch = ++switchNonceRef.current;
 
+      // Treat every account change as a switch-in-progress until we confirm the
+      // new account matches the Firebase profile. This keeps route guards showing
+      // a spinner instead of redirecting while we run silent re-verification.
+      setIsSwitchingAccount(true);
+
       try {
         const rawAccount = accountList[0];
         const newAddress = ethers.getAddress(rawAccount);
@@ -476,17 +498,85 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
             "!==",
             newAddress
           );
+          setIsSwitchingAccount(false);
           return;
         }
 
         const network = await browserProvider.getNetwork();
         if (currentSwitch !== switchNonceRef.current) return;
 
+        // Update signer, provider, address and chainId atomically so consumers
+        // never observe a signer that points at a different address.
         setProvider(browserProvider);
         setSigner(newSigner);
         setAddress(newAddress);
         setChainId(Number(network.chainId));
         setError(null);
+
+        // Silent re-verification: if a verified user switches to a wallet that
+        // is not the one stored in Firebase, run the FCC flow in the background
+        // and update the profile. Do NOT redirect here — leave that to the
+        // route guards if verification ultimately fails.
+        if (user) {
+          try {
+            const profile = await getUserProfile(user.uid);
+            if (currentSwitch !== switchNonceRef.current) return;
+
+            const isDifferentWallet =
+              Boolean(profile?.walletAddress) &&
+              profile!.walletAddress!.toLowerCase() !== newAddress.toLowerCase();
+            const wasVerified =
+              Boolean(profile?.verifiedAt) &&
+              profile?.isVerifiedHuman === true &&
+              profile?.isOldEnoughWallet === true;
+
+            if (isDifferentWallet && wasVerified) {
+              console.log(
+                "[Web3Context] Account switched to new wallet; starting silent re-verification for",
+                newAddress,
+              );
+
+              const result = await runFCCVerification(newSigner, newAddress);
+              if (currentSwitch !== switchNonceRef.current) return;
+
+              if (!result.isVerifiedHuman || !result.isOldEnoughWallet) {
+                throw new Error(
+                  "Verification did not meet the required thresholds. Switch back to your previously verified account, or complete onboarding again."
+                );
+              }
+
+              const message = `Switch wallet to ${newAddress.toLowerCase()} for KnockKnock account ${user.uid}`;
+              const signature = await newSigner.signMessage(message);
+              if (currentSwitch !== switchNonceRef.current) return;
+
+              await switchLinkedWallet({
+                walletAddress: newAddress,
+                signature,
+                txHash: result.txHash,
+              });
+
+              console.log(
+                "[Web3Context] Silent re-verification succeeded; profile updated to",
+                newAddress,
+              );
+            }
+          } catch (err: unknown) {
+            if (currentSwitch !== switchNonceRef.current) return;
+            console.error("[Web3Context] Silent re-verification failed:", err);
+            const message =
+              err instanceof Error
+                ? err.message
+                : "Account switch verification failed.";
+            setError(message);
+          } finally {
+            if (currentSwitch === switchNonceRef.current) {
+              setIsSwitchingAccount(false);
+            }
+          }
+        } else {
+          // No Firebase session: nothing to verify against.
+          setIsSwitchingAccount(false);
+        }
       } catch (err: unknown) {
         // Only surface errors from the most recent switch event.
         if (currentSwitch !== switchNonceRef.current) return;
@@ -494,6 +584,9 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
         const message =
           err instanceof Error ? err.message : "Failed to switch account";
         setError(message);
+        if (currentSwitch === switchNonceRef.current) {
+          setIsSwitchingAccount(false);
+        }
       }
     };
 
@@ -513,7 +606,7 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
         provider.removeListener("chainChanged", handleChainChanged);
       }
     };
-  }, [walletProvider]);
+  }, [walletProvider, user]);
 
   return (
     <Web3Context.Provider
@@ -523,6 +616,7 @@ export function Web3Provider({ children }: { children: React.ReactNode }) {
         signer,
         provider,
         isConnecting,
+        isSwitchingAccount,
         error,
         connect,
         connectWallet,

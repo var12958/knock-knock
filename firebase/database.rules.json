@@ -13,6 +13,21 @@
         ".write": "auth != null && auth.uid == $uid"
       }
     },
+    "deletedChats": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "groups": {
+      "$uid": {
+        "$groupId": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['requestIds','createdAt']) && newData.child('createdAt').isNumber() && newData.child('requestIds').hasChildren()"
+        }
+      }
+    },
     "usernames": {
       "$username": {
         ".read": true,
@@ -25,6 +40,13 @@
         ".read": false,
         ".write": false,
         ".validate": "newData.hasChildren(['uid', 'linkedAt'])"
+      }
+    },
+    "twitterByWallet": {
+      "$address": {
+        ".read": true,
+        ".write": false,
+        ".validate": "newData.hasChildren(['twitterVerified','twitterHandle','verifiedBy','verifiedAt']) && newData.child('twitterVerified').isBoolean() && newData.child('verifiedAt').isNumber()"
       }
     },
     "requests": {

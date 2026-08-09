@@ -100,10 +100,17 @@ export default function InboxList({ refreshKey }: InboxListProps) {
         // signer-connected contract even though these are view calls.
         const signerContract = getMailboxContractWrite(signer);
 
+        console.log("[InboxList] calling getPendingRequests for address:", address);
         const [ids, rawRequests]: [bigint[], any[]] = await Promise.all([
           signerContract.getPendingRequestIds(address, offsetToUse, PAGE_SIZE),
           signerContract.getPendingRequests(address, offsetToUse, PAGE_SIZE),
         ]);
+        console.log("[InboxList] getPendingRequests raw result:", {
+          address,
+          offset: offsetToUse,
+          ids: ids.map((id) => id.toString()),
+          rawRequests,
+        });
 
         const pending: ChatRequest[] = ids.map((id, i) =>
           mapRequest(id, rawRequests[i]),
@@ -144,8 +151,16 @@ export default function InboxList({ refreshKey }: InboxListProps) {
         // `getRequestsByReceiver` enforces msg.sender == _receiver, so a
         // signer-connected contract is required (view calls do not prompt).
         const contract = getMailboxContractWrite(signer);
+
+        console.log("[InboxList] calling getRequestsByReceiver for address:", address);
         const [ids, rawRequests]: [bigint[], any[]] =
           await contract.getRequestsByReceiver(address, offsetToUse, PAGE_SIZE);
+        console.log("[InboxList] getRequestsByReceiver raw result:", {
+          address,
+          offset: offsetToUse,
+          ids: ids.map((id) => id.toString()),
+          rawRequests,
+        });
 
         const mapped: ChatRequest[] = ids.map((id, i) =>
           mapRequest(id, rawRequests[i]),
@@ -179,6 +194,18 @@ export default function InboxList({ refreshKey }: InboxListProps) {
       setReceiverHasMore(true);
       return;
     }
+
+    // The signer and address must update atomically in Web3Context, but React
+    // still re-runs this effect whenever either changes. Reset both lists and
+    // pagination immediately so the user never sees another account's inbox while
+    // the new account's data is loading.
+    setRequests([]);
+    setReceiverRequests([]);
+    setOffset(0);
+    setReceiverOffset(0);
+    setHasMore(true);
+    setReceiverHasMore(true);
+    setError(null);
 
     void loadRequests(true);
     void loadReceiverRequests(true);
@@ -429,7 +456,7 @@ export default function InboxList({ refreshKey }: InboxListProps) {
                   {initial}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-bold text-[#DFD0B8]">
+                  <p className="flex items-center gap-1 truncate text-sm font-bold text-[#DFD0B8]">
                     {nickname ?? shortenAddress(req.sender)}
                   </p>
                   <p className="truncate text-xs text-[#948979]">

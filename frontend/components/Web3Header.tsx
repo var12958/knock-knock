@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getUserProfile } from "@/lib/firebaseProfile";
-import { COSTON2_CHAIN_ID } from "@/lib/chain";
+import { COSTON2_ADD_PROMPT, COSTON2_CHAIN_ID } from "@/lib/chain";
 
 function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -136,7 +136,13 @@ export default function Web3Header() {
       </div>
 
       {error && (
-        <div className="mx-auto mt-3 max-w-7xl rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm text-rose-300 ring-1 ring-rose-500/10">
+        <div
+          className={`mx-auto mt-3 max-w-7xl rounded-xl border px-4 py-2 text-sm ring-1 ${
+            error === COSTON2_ADD_PROMPT
+              ? "border-amber-500/25 bg-amber-500/10 text-amber-200 ring-amber-500/10"
+              : "border-rose-500/20 bg-rose-500/10 text-rose-300 ring-rose-500/10"
+          }`}
+        >
           {error}
         </div>
       )}

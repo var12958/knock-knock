@@ -27,6 +27,22 @@ const mailboxAddress = defineString("MAILBOX_ADDRESS", {
   default: "",
 });
 
+// --- Twitter verification via the Flare Data Connector (FDC) ---
+// When FDC_VERIFIER_URL is empty (or FDC_MOCK_TWITTER is true) the function
+// uses a deterministic mock so the hackathon demo works without live FDC +
+// Twitter credentials. The mock runs entirely server-side, so the client
+// cannot influence its result; only the persisted flag is non-authoritative.
+const fdcVerifierUrl = defineString("FDC_VERIFIER_URL", { default: "" });
+const twitterBearerToken = defineString("TWITTER_BEARER_TOKEN", { default: "" });
+const twitterApiBaseUrl = defineString("TWITTER_API_BASE_URL", {
+  default: "https://api.twitter.com/2",
+});
+const fdcMockTwitter = defineString("FDC_MOCK_TWITTER", { default: "true" });
+const fdcPollIntervalMs = defineString("FDC_POLL_INTERVAL_MS", { default: "3000" });
+const fdcPollMaxAttempts = defineString("FDC_POLL_MAX_ATTEMPTS", { default: "40" });
+
+const TWITTER_HANDLE_REGEX = /^[a-z0-9_]{1,15}$/;
+
 const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 24;
 const USERNAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -440,19 +456,15 @@ export async function publishChatRequestHandler(
   const event = parseRequestSent(receipt);
   assertProfileWalletMatches(profile, event.sender);
 
-  // Resolve the receiver's UID from the wallet-address index.
+  // Resolve the receiver's UID from the wallet-address index if the receiver has
+  // already linked a wallet. A knock can be sent to any valid wallet, even if
+  // the receiver has not onboarded yet; the request metadata is persisted under
+  // their address so it is ready when they do log in.
   const receiverAddress = event.receiver.toLowerCase();
   const receiverSnapshot = await db.ref(`walletAddresses/${receiverAddress}`).get();
-  if (!receiverSnapshot.exists()) {
-    throw new HttpsError(
-      "not-found",
-      "Receiver wallet is not linked to a KnockKnock profile.",
-    );
-  }
-
-  const receiverUid = (receiverSnapshot.val() as { uid?: string }).uid;
-  if (!receiverUid) {
-    throw new HttpsError("not-found", "Receiver profile not found.");
+  let receiverUid: string | undefined;
+  if (receiverSnapshot.exists()) {
+    receiverUid = (receiverSnapshot.val() as { uid?: string }).uid ?? undefined;
   }
 
   const requestId = event.requestId.toString();
@@ -465,19 +477,34 @@ export async function publishChatRequestHandler(
       senderUid?: string;
       receiverUid?: string;
     };
-    if (existingData.senderUid !== uid || existingData.receiverUid !== receiverUid) {
-      throw new HttpsError("already-exists", "Chat request already exists with different participants.");
+    if (existingData.senderUid !== uid) {
+      throw new HttpsError(
+        "already-exists",
+        "Chat request already exists with different participants.",
+      );
     }
+
+    // If the receiver has since linked a wallet, backfill their UID so the
+    // request becomes readable by them. This keeps the function idempotent for
+    // the same txHash while supporting knocks sent before the receiver onboarded.
+    if (receiverUid && existingData.receiverUid !== receiverUid) {
+      await requestRef.child("receiverUid").set(receiverUid);
+    }
+
     return { success: true, requestId, receiverUid };
   }
 
-  await requestRef.set({
+  const requestData: Record<string, unknown> = {
     senderUid: uid,
-    receiverUid,
     senderAddress: event.sender,
     receiverAddress: event.receiver,
     createdAt: now,
-  });
+  };
+  if (receiverUid) {
+    requestData.receiverUid = receiverUid;
+  }
+
+  await requestRef.set(requestData);
 
   return { success: true, requestId, receiverUid };
 }
@@ -589,4 +616,548 @@ export const verifyFCCOnboarding = onCall<VerifyFCCOnboardingData>(
     secrets: [],
   },
   verifyFCCOnboardingHandler,
+);
+
+export interface SwitchLinkedWalletData {
+  walletAddress: string;
+  signature: string;
+  txHash: string;
+}
+
+export interface SwitchLinkedWalletResult {
+  success: boolean;
+  walletAddress: string;
+  isVerifiedHuman: boolean;
+  isOldEnoughWallet: boolean;
+}
+
+/**
+ * Switch the wallet linked to an already-verified profile.
+ *
+ * Security invariants enforced:
+ *   - Caller must be authenticated.
+ *   - The profile must already be verified (this is for account switching, not onboarding).
+ *   - A signature proves ownership of the new wallet address.
+ *   - The supplied FCC verification transaction must be to the mailbox contract
+ *     and must have been sent by the new wallet address.
+ *   - The on-chain request struct is read to obtain TEE-attested flags.
+ *   - The walletAddresses index is updated atomically so the old address is released
+ *     and the new address is reserved for this UID.
+ */
+function buildSwitchWalletUpdate(
+  currentData: TransactionData | null,
+  uid: string,
+  oldNormalizedAddress: string,
+  newNormalizedAddress: string,
+  walletAddress: string,
+  isVerifiedHuman: boolean,
+  isOldEnoughWallet: boolean,
+  verificationTxHash: string,
+  now: number,
+): TransactionData | undefined {
+  // Guard against concurrent switches or profile deletion: the current
+  // profile must exist and its wallet address must still be the one we
+  // read before starting the switch.
+  const currentProfile = currentData?.users?.[uid];
+  if (!currentProfile || currentProfile.walletAddress?.toLowerCase() !== oldNormalizedAddress) {
+    return undefined;
+  }
+
+  const existingLink = currentData?.walletAddresses?.[newNormalizedAddress];
+  if (existingLink && existingLink.uid !== uid) {
+    return undefined;
+  }
+
+  const nextData: TransactionData = JSON.parse(JSON.stringify(currentData ?? {}));
+  nextData.users = nextData.users ?? {};
+  nextData.walletAddresses = nextData.walletAddresses ?? {};
+
+  // Release the old wallet index entry.
+  if (nextData.walletAddresses[oldNormalizedAddress]) {
+    delete nextData.walletAddresses[oldNormalizedAddress];
+  }
+
+  // Update the user profile with the new wallet and fresh verification record.
+  nextData.users[uid] = nextData.users[uid] ?? {};
+  nextData.users[uid].walletAddress = walletAddress;
+  nextData.users[uid].isVerifiedHuman = isVerifiedHuman;
+  nextData.users[uid].isOldEnoughWallet = isOldEnoughWallet;
+  nextData.users[uid].verificationTxHash = verificationTxHash;
+  nextData.users[uid].verifiedAt = now;
+  nextData.users[uid].updatedAt = now;
+
+  // Reserve the new wallet index entry.
+  nextData.walletAddresses[newNormalizedAddress] = {
+    uid,
+    linkedAt: now,
+  };
+
+  return nextData;
+}
+
+export async function switchLinkedWalletHandler(
+  request: CallableRequest<SwitchLinkedWalletData>,
+): Promise<SwitchLinkedWalletResult> {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be signed in.");
+  }
+
+  const uid = request.auth.uid;
+  const walletAddress = request.data.walletAddress;
+  const signature = request.data.signature;
+  const txHash = request.data.txHash;
+
+  if (!walletAddress || !ethers.isAddress(walletAddress)) {
+    throw new HttpsError("invalid-argument", "A valid wallet address is required.");
+  }
+  if (!signature || typeof signature !== "string" || !signature.startsWith("0x")) {
+    throw new HttpsError("invalid-argument", "A valid signature is required.");
+  }
+  if (!txHash || typeof txHash !== "string" || !/^0x([A-Fa-f0-9]{64})$/.test(txHash)) {
+    throw new HttpsError("invalid-argument", "A valid transaction hash is required.");
+  }
+
+  const profile = await loadProfile(uid);
+  const oldWalletAddress = profile.walletAddress;
+  if (!oldWalletAddress || !ethers.isAddress(oldWalletAddress)) {
+    throw new HttpsError("failed-precondition", "No wallet address linked to this profile.");
+  }
+  if (!profile.verifiedAt) {
+    throw new HttpsError("failed-precondition", "Profile must be verified before switching wallets.");
+  }
+
+  const normalizedAddress = walletAddress.toLowerCase();
+  if (oldWalletAddress.toLowerCase() === normalizedAddress) {
+    return {
+      success: true,
+      walletAddress,
+      isVerifiedHuman: Boolean(profile.isVerifiedHuman),
+      isOldEnoughWallet: Boolean(profile.isOldEnoughWallet),
+    };
+  }
+
+  const message = `Switch wallet to ${normalizedAddress} for KnockKnock account ${uid}`;
+
+  let recoveredAddress: string;
+  try {
+    recoveredAddress = ethers.verifyMessage(message, signature);
+  } catch (err) {
+    console.error("Signature verification failed:", err);
+    throw new HttpsError("invalid-argument", "Invalid wallet signature.");
+  }
+  if (recoveredAddress.toLowerCase() !== normalizedAddress) {
+    throw new HttpsError("permission-denied", "Signature does not match the wallet address.");
+  }
+
+  // Validate the FCC proof transaction for the new wallet.
+  const receipt = await fetchReceipt(txHash);
+  const event = parseRequestSent(receipt);
+
+  if (event.sender.toLowerCase() !== normalizedAddress) {
+    throw new HttpsError(
+      "permission-denied",
+      "Transaction sender does not match the new wallet address.",
+    );
+  }
+
+  const address = getConfiguredMailboxAddress();
+  const mailbox = new ethers.Contract(address, MAILBOX_ABI, getProvider());
+  let requestStruct: {
+    sender: string;
+    receiver: string;
+    encryptedPreviewMessage: string;
+    isVerifiedHuman: boolean;
+    isOldEnoughWallet: boolean;
+    accepted: boolean;
+    isRevealed: boolean;
+    expirationTime: bigint;
+  };
+  try {
+    requestStruct = (await mailbox.requests(event.requestId)) as typeof requestStruct;
+  } catch (err) {
+    console.error("RPC error reading request struct:", err);
+    throw new HttpsError("internal", "Unable to read request details from the mailbox.");
+  }
+  if (requestStruct.sender.toLowerCase() !== normalizedAddress) {
+    throw new HttpsError(
+      "permission-denied",
+      "Request sender does not match the new wallet address.",
+    );
+  }
+
+  const isVerifiedHuman = Boolean(requestStruct.isVerifiedHuman);
+  const isOldEnoughWallet = Boolean(requestStruct.isOldEnoughWallet);
+  if (!isVerifiedHuman || !isOldEnoughWallet) {
+    throw new HttpsError(
+      "failed-precondition",
+      "New wallet does not meet the verification thresholds.",
+    );
+  }
+
+  const now = Date.now();
+
+  try {
+    const { committed } = await db.ref().transaction((currentData) =>
+      buildSwitchWalletUpdate(
+        currentData,
+        uid,
+        oldWalletAddress.toLowerCase(),
+        normalizedAddress,
+        walletAddress,
+        isVerifiedHuman,
+        isOldEnoughWallet,
+        txHash,
+        now,
+      ),
+    );
+    if (!committed) {
+      throw new HttpsError(
+        "aborted",
+        "Wallet switch conflict — the linked wallet changed during the switch. Please try again.",
+      );
+    }
+  } catch (err: any) {
+    if (err instanceof HttpsError) {
+      throw err;
+    }
+    console.error("Failed to switch wallet:", err);
+    throw new HttpsError("internal", "Could not switch wallet. Please try again.");
+  }
+
+  return {
+    success: true,
+    walletAddress,
+    isVerifiedHuman,
+    isOldEnoughWallet,
+  };
+}
+
+export const switchLinkedWallet = onCall<SwitchLinkedWalletData>(
+  {
+    region: "us-central1",
+    minInstances: 0,
+    maxInstances: 10,
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    secrets: [],
+  },
+  switchLinkedWalletHandler,
+);
+
+/* ------------------------------------------------------------------ */
+/* Twitter verification via the Flare Data Connector (FDC)             */
+/* ------------------------------------------------------------------ */
+
+export interface VerifyTwitterOnboardingData {
+  twitterHandle: string;
+}
+
+export interface VerifyTwitterOnboardingResult {
+  success: boolean;
+  isTwitterVerified: boolean;
+  twitterHandle: string;
+  attestationId: string;
+}
+
+interface FdcWeb2JsonRequest {
+  attestationType: string;
+  sourceId: string;
+  requestId: number;
+  data: {
+    url: string;
+    headers: string;
+    postParameters: string;
+    body: string;
+    responseType: string;
+    httpMethod: string;
+    jmespathExpression: string;
+  };
+}
+
+interface FdcAttestationStatus {
+  status: string;
+  response?: { encodedData?: string };
+  error?: string;
+  message?: string;
+}
+
+function normalizeTwitterHandle(handle: string): string {
+  const trimmed = handle.trim().replace(/^@+/, "").toLowerCase();
+  return TWITTER_HANDLE_REGEX.test(trimmed) ? trimmed : "";
+}
+
+/**
+ * Build the FDC Web2Json attestation request for a Twitter v2 user lookup.
+ * The JMESPath expression `data.verified` selects the `verified` boolean from
+ * the Twitter `GET /2/users/by/username/:username` response.
+ */
+function buildTwitterFdcRequest(handle: string): FdcWeb2JsonRequest {
+  const base = twitterApiBaseUrl.value().replace(/\/$/, "");
+  const url = `${base}/users/by/username/${encodeURIComponent(
+    handle,
+  )}?user.fields=public_metrics,verified`;
+
+  return {
+    attestationType: "Web2Json",
+    sourceId: "twitter",
+    requestId: 0,
+    data: {
+      url,
+      headers: JSON.stringify({
+        Authorization: `Bearer ${twitterBearerToken.value()}`,
+      }),
+      postParameters: "",
+      body: "",
+      responseType: "string",
+      httpMethod: "GET",
+      jmespathExpression: "data.verified",
+    },
+  };
+}
+
+async function submitFdcAttestation(
+  request: FdcWeb2JsonRequest,
+): Promise<string> {
+  const endpoint = `${fdcVerifierUrl.value().replace(/\/$/, "")}/verifier/api/0.1/Attestation/post`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`FDC submit returned ${response.status}: ${text}`);
+    }
+
+    let body: { attestationId?: string; requestHash?: string; error?: string };
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error(`FDC submit returned non-JSON: ${text}`);
+    }
+    if (body.error) {
+      throw new Error(`FDC submit error: ${body.error}`);
+    }
+    const attestationId = body.attestationId ?? body.requestHash;
+    if (!attestationId) {
+      throw new Error("FDC submit did not return an attestation id");
+    }
+    console.log(`[verifyTwitterOnboarding] submitted attestation: ${attestationId}`);
+    return attestationId;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function pollFdcAttestation(attestationId: string): Promise<string> {
+  const endpoint = `${fdcVerifierUrl.value().replace(/\/$/, "")}/verifier/api/0.1/Attestation/status/${encodeURIComponent(
+    attestationId,
+  )}`;
+  const maxAttempts = Number(fdcPollMaxAttempts.value());
+  const intervalMs = Number(fdcPollIntervalMs.value());
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`FDC status returned ${response.status}: ${text}`);
+      }
+      const body = (await response.json()) as FdcAttestationStatus;
+      if (body.status === "REJECTED") {
+        throw new Error(
+          `FDC attestation rejected: ${body.error ?? body.message ?? "unknown"}`,
+        );
+      }
+      if (body.status === "DONE") {
+        const encodedData = body.response?.encodedData;
+        if (!encodedData) {
+          throw new Error("FDC attestation completed without encoded data");
+        }
+        console.log(
+          `[verifyTwitterOnboarding] attestation finalized on attempt ${attempt + 1}`,
+        );
+        return encodedData;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error("timed out waiting for the FDC twitter attestation");
+}
+
+/** Decode the FDC Web2Json response into a `verified` boolean. */
+function decodeTwitterVerifiedFromFdc(encodedData: string): boolean {
+  try {
+    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["bytes"],
+      encodedData,
+    ) as unknown as [string];
+    const tail = ethers.hexlify(decoded[0]).slice(2);
+    const ascii = Buffer.from(tail, "hex").toString("utf-8").trim();
+    const lastToken = ascii.split(/ |"/).filter(Boolean).pop() ?? "";
+    return lastToken.toLowerCase() === "true" || lastToken === "1";
+  } catch (err) {
+    console.error(`[verifyTwitterOnboarding] failed to decode verified flag:`, err);
+    throw new Error(`FDC twitter response was not decodable: ${err}`);
+  }
+}
+
+/**
+ * Server-side Twitter verification via the Flare Data Connector.
+ * @returns `[isTwitterVerified, attestationId]`.
+ */
+async function checkTwitterVerificationServer(
+  walletAddress: string,
+  handle: string,
+): Promise<[boolean, string]> {
+  const useMock =
+    fdcMockTwitter.value().toLowerCase() === "true" ||
+    !fdcVerifierUrl.value().trim() ||
+    !twitterBearerToken.value().trim();
+
+  if (useMock) {
+    // Deterministic mock running entirely server-side: the client cannot
+    // influence the result. Returns false for obvious spam handles.
+    const spamPrefixes = ["bot", "spam", "fake", "scam"];
+    const isSpam = spamPrefixes.some((p) => handle.startsWith(p));
+    const isTwitterVerified = !isSpam && handle.length >= 2;
+    const attestationId = ethers.id(
+      `mock-twitter-${walletAddress.toLowerCase()}-${handle}`,
+    );
+    console.log(
+      `[verifyTwitterOnboarding] mock verified=${isTwitterVerified} handle=${handle}`,
+    );
+    return [isTwitterVerified, attestationId];
+  }
+
+  const fdcRequest = buildTwitterFdcRequest(handle);
+  const attestationId = await submitFdcAttestation(fdcRequest);
+  const encodedData = await pollFdcAttestation(attestationId);
+  const isTwitterVerified = decodeTwitterVerifiedFromFdc(encodedData);
+  return [isTwitterVerified, attestationId];
+}
+
+/**
+ * Verifies a Twitter handle via the Flare Data Connector and, only if the FDC
+ * attestation confirms it is a verified account, writes the `twitterVerified`
+ * flag to the user's profile and the public-by-wallet badge index.
+ *
+ * Security invariants enforced:
+ *   - Caller must be authenticated.
+ *   - The profile must have a linked wallet address (the badge is keyed by it).
+ *   - The FDC attestation is performed server-side; the client cannot forge it.
+ *   - Only a verified attestation writes the flag (RTDB rules are write-false).
+ */
+export async function verifyTwitterOnboardingHandler(
+  request: CallableRequest<VerifyTwitterOnboardingData>,
+): Promise<VerifyTwitterOnboardingResult> {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be signed in.");
+  }
+
+  const uid = request.auth.uid;
+  const rawHandle = request.data?.twitterHandle;
+  if (typeof rawHandle !== "string" || !rawHandle.trim()) {
+    throw new HttpsError("invalid-argument", "A Twitter handle is required.");
+  }
+  const handle = normalizeTwitterHandle(rawHandle);
+  if (!handle) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Twitter handle must be 1-15 letters, numbers, or underscores.",
+    );
+  }
+
+  const profile = await loadProfile(uid);
+  const walletAddress = profile.walletAddress;
+  if (!walletAddress || !ethers.isAddress(walletAddress)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "No wallet address linked to this profile. Connect your wallet first.",
+    );
+  }
+
+  let isTwitterVerified: boolean;
+  let attestationId: string;
+  try {
+    [isTwitterVerified, attestationId] = await checkTwitterVerificationServer(
+      walletAddress,
+      handle,
+    );
+  } catch (err: any) {
+    console.error("[verifyTwitterOnboarding] FDC verification failed:", err);
+    throw new HttpsError(
+      "internal",
+      err?.message ?? "Twitter verification failed.",
+    );
+  }
+
+  if (!isTwitterVerified) {
+    return {
+      success: false,
+      isTwitterVerified: false,
+      twitterHandle: handle,
+      attestationId,
+    };
+  }
+
+  const normalizedAddress = walletAddress.toLowerCase();
+  const now = Date.now();
+  const badgeRecord = {
+    twitterVerified: true,
+    twitterHandle: handle,
+    walletAddress: normalizedAddress,
+    verifiedBy: uid,
+    attestationId,
+    verifiedAt: now,
+  };
+
+  // Admin SDK bypasses RTDB rules, so it can write the write-false nodes.
+  await Promise.all([
+    db.ref(`twitterByWallet/${normalizedAddress}`).set(badgeRecord),
+    db.ref(`users/${uid}`).update({
+      twitterVerified: true,
+      twitterHandle: handle,
+      twitterVerifiedAt: now,
+      updatedAt: now,
+    }),
+  ]);
+
+  return {
+    success: true,
+    isTwitterVerified: true,
+    twitterHandle: handle,
+    attestationId,
+  };
+}
+
+export const verifyTwitterOnboarding = onCall<VerifyTwitterOnboardingData>(
+  {
+    region: "us-central1",
+    minInstances: 0,
+    maxInstances: 10,
+    memory: "256MiB",
+    // FDC polling can take longer than the default 30s under load.
+    timeoutSeconds: 180,
+    secrets: [],
+  },
+  verifyTwitterOnboardingHandler,
 );

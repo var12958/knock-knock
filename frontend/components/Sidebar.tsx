@@ -4,9 +4,26 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
+import { onValue, ref } from "firebase/database";
+import { realtimeDb } from "@/lib/firebase";
 import { getMailboxContractRead, getMailboxContractWrite } from "@/lib/contracts";
 import { decodePreview } from "@/lib/encodePreview";
 import { setNickname, subscribeNicknames } from "@/lib/firebaseContacts";
+import {
+  addDeletedChat,
+  subscribeDeletedChats,
+} from "@/lib/firebaseDeletedChats";
+
+/**
+ * A Group Knock mapping persisted by SendRequestForm after a multi-receiver
+ * send. `requestIds` are the on-chain mailbox request ids created for each
+ * receiver; clicking the card routes to /chat/group/{groupId}.
+ */
+interface GroupChat {
+  groupId: string;
+  requestIds: string[];
+  createdAt: number;
+}
 
 interface ChatRequest {
   requestId: string;
@@ -52,6 +69,12 @@ function parseChatId(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+/** Parse a `/chat/group/[groupId]` path into its group id (active highlighting). */
+function parseGroupId(pathname: string): string | null {
+  const match = pathname.match(/^\/chat\/group\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export default function Sidebar({ refreshKey }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "/";
@@ -67,6 +90,18 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
 
   // nickname map keyed by lowercase sender address.
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
+
+  // Request ids the user has hidden from their Chats list (persisted in
+  // Firebase at deletedChats/{uid}/{requestId}). Accepted chats whose id is in
+  // this set are filtered out of the rendered list. Kept as a Set so membership
+  // checks are O(1) and the real-time subscription can reconcile it directly.
+  const [deletedChats, setDeletedChats] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Group Knock mappings for the current user (persisted at groups/{uid}).
+  // Each entry groups the on-chain request ids created for a multi-receiver
+  // send into a single Group Chat card rendered above individual chats.
+  const [groups, setGroups] = useState<GroupChat[]>([]);
 
   // Edit-nickname modal state.
   const [editing, setEditing] = useState<string | null>(null);
@@ -161,6 +196,65 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     }
   }, [user]);
 
+  // Subscribe to the user's hidden-chats id set in real time. This is decoupled
+  // from the on-chain chats fetch (same pattern as nicknames): the flag set
+  // populates as soon as the user is authenticated and reconciles the accepted
+  // list via the render-time filter below.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    try {
+      const unsubscribe = subscribeDeletedChats(user.uid, (fetched) => {
+        if (!active) return;
+        setDeletedChats(fetched);
+      });
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    } catch (err: any) {
+      console.error("[Sidebar] deletedChats subscription failed:", err);
+    }
+  }, [user]);
+
+  // Subscribe to the user's Group Knock mappings in real time. Each mapping is
+  // written by SendRequestForm after a multi-receiver send and rendered as a
+  // Group Chat card above the individual accepted chats.
+  useEffect(() => {
+    if (!user || !realtimeDb) return;
+    let active = true;
+    try {
+      const groupsRef = ref(realtimeDb, `groups/${user.uid}`);
+      const unsubscribe = onValue(groupsRef, (snapshot) => {
+        if (!active) return;
+        if (!snapshot.exists()) {
+          setGroups([]);
+          return;
+        }
+        const val = snapshot.val() as Record<
+          string,
+          { requestIds?: string[]; createdAt?: number }
+        >;
+        const list: GroupChat[] = Object.entries(val).map(
+          ([groupId, g]) => ({
+            groupId,
+            requestIds: Array.isArray(g.requestIds) ? g.requestIds : [],
+            createdAt: typeof g.createdAt === "number" ? g.createdAt : 0,
+          }),
+        );
+        // Newest groups first.
+        list.sort((a, b) => b.createdAt - a.createdAt);
+        setGroups(list);
+      });
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    } catch (err: any) {
+      console.error("[Sidebar] groups subscription failed:", err);
+    }
+  }, [user]);
+
   const handleAccept = useCallback(
     async (requestId: string) => {
       if (!signer) return;
@@ -208,6 +302,44 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     setEditError(null);
   }
 
+  /**
+   * Hide an accepted chat from the user's Chats list. Hiding is a client-side
+   * preference only — it writes a truthy flag to `deletedChats/{uid}/{requestId}`
+   * and the render-time filter drops the row. It does NOT touch the on-chain
+   * request or the encrypted chat history. Optimistic local update first so
+   * the row disappears instantly; the real-time subscription reconciles.
+   */
+  const handleDeleteChat = useCallback(
+    async (requestId: string) => {
+      if (!user) return;
+      setActionId(requestId);
+      setDeletingId(requestId);
+      setError(null);
+      // Optimistic: drop the row immediately.
+      setDeletedChats((prev) => {
+        const next = new Set(prev);
+        next.add(requestId);
+        return next;
+      });
+      try {
+        await addDeletedChat(user.uid, requestId);
+      } catch (err: any) {
+        console.error("[Sidebar] delete chat failed:", err);
+        // Roll back the optimistic hide so the row reappears.
+        setDeletedChats((prev) => {
+          const next = new Set(prev);
+          next.delete(requestId);
+          return next;
+        });
+        setError(err.message ?? "Could not hide chat");
+      } finally {
+        setActionId(null);
+        setDeletingId(null);
+      }
+    },
+    [user],
+  );
+
   async function handleSaveNickname() {
     if (!user || !editing) return;
     const trimmed = editValue.trim();
@@ -248,6 +380,14 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
   }
 
   const activeChatId = parseChatId(pathname);
+  const activeGroupId = parseGroupId(pathname);
+
+  // Accepted chats the user has NOT hidden. Filtering at render time (rather
+  // than inside loadRequests) keeps the hidden list authoritative even when
+  // the Firebase subscription arrives after the on-chain fetch.
+  const visibleAcceptedChats = acceptedChats.filter(
+    (req) => !deletedChats.has(req.requestId),
+  );
 
   return (
     <aside className="flex w-80 flex-col border-r border-[#DFD0B8]/10 bg-[#222831]">
@@ -284,15 +424,51 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
               </p>
             )}
 
+            {/* Section 0: Group Chats — multi-party knocks rendered above
+                individual accepted chats. */}
+            {groups.length > 0 && (
+              <>
+                <SectionLabel>Group Chats</SectionLabel>
+                {groups.map((g) => {
+                  const isActive = activeGroupId === g.groupId;
+                  return (
+                    <button
+                      key={`group-${g.groupId}`}
+                      type="button"
+                      onClick={() => router.push(`/chat/group/${g.groupId}`)}
+                      className={`flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-200 ${
+                        isActive ? "bg-[#393E46]" : "hover:bg-[#393E46]/60"
+                      }`}
+                    >
+                      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-sm">
+                        👥
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-[#DFD0B8]">
+                          Group Chat
+                        </span>
+                        <span className="block truncate text-xs text-[#948979]">
+                          {g.requestIds.length} members
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+
             {/* Section 1: Chats */}
-            <SectionLabel>Chats</SectionLabel>
-            {acceptedChats.length === 0 ? (
+            <SectionLabel className={groups.length > 0 ? "mt-4" : ""}>
+              Chats
+            </SectionLabel>
+            {visibleAcceptedChats.length === 0 ? (
               <EmptyHint>No conversations yet.</EmptyHint>
             ) : (
-              acceptedChats.map((req) => {
+              visibleAcceptedChats.map((req) => {
                 const nickname = nicknames[req.sender.toLowerCase()];
                 const initial = nickname ? nickname[0].toUpperCase() : "💬";
                 const isActive = activeChatId === req.requestId;
+                const isDeleting = deletingId === req.requestId;
                 return (
                   <div
                     key={`chat-${req.requestId}`}
@@ -339,6 +515,30 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
                       >
                         <path d="M12 20h9" />
                         <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteChat(req.requestId)}
+                      disabled={isDeleting || actionId === req.requestId}
+                      aria-label={`Hide chat ${nickname ?? shortenAddress(req.sender)}`}
+                      title="Hide chat"
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-[#948979] opacity-0 transition-colors duration-200 hover:text-rose-300 focus:text-rose-300 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 group-hover:opacity-100"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-3.5 w-3.5"
+                        aria-hidden
+                      >
+                        <path d="M3 6h18" />
+                        <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6M14 11v6" />
                       </svg>
                     </button>
                   </div>

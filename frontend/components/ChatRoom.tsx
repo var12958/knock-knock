@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ref, push, set, onValue } from "firebase/database";
+import { ref, push, set, remove, onValue } from "firebase/database";
 import { getAuth } from "firebase/auth";
 import { realtimeDb } from "@/lib/firebase";
 import { useWeb3 } from "@/context/Web3Context";
@@ -16,6 +16,8 @@ interface ChatMessage {
   timestamp: number;
   isMine: boolean;
   isTip?: boolean;
+  /** Burn-after-reading flag. Incoming burn messages self-destruct 30s after read. */
+  isBurn?: boolean;
 }
 
 interface RequestDetails {
@@ -27,6 +29,9 @@ interface RequestDetails {
 interface ChatRoomProps {
   requestId: string;
 }
+
+/** Lifetime of an incoming burn message before it is deleted from Firebase. */
+const BURN_AFTER_MS = 30_000;
 
 function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -44,7 +49,25 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
   const [isTipModalOpen, setIsTipModalOpen] = useState(false);
   const [tipAmount, setTipAmount] = useState("0.1");
   const [tipError, setTipError] = useState<string | null>(null);
+
+  // ML behavioral Sybil-detection state.
+  const [mlScore, setMlScore] = useState<{
+    humanProbability: number;
+    botProbability: number;
+    explanation: string[];
+    modelVersion: string;
+  } | null>(null);
+  const [isCheckingML, setIsCheckingML] = useState(false);
+  const [mlError, setMlError] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Burn-after-reading: when on, outgoing messages are tagged isBurn and any
+  // incoming burn message starts a 30s self-destruct countdown.
+  const [isBurnMode, setIsBurnMode] = useState(false);
+  // Tracks active burn countdown timers keyed by message id so each incoming
+  // burn message is armed exactly once and every timer can be cleared on unmount.
+  const burnTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // Load request details from the blockchain.
   useEffect(() => {
@@ -118,11 +141,46 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       return;
     }
 
-    const messagesRef = ref(realtimeDb, `chats/${requestId}/messages`);
+    // Capture the narrowed Database handle so deferred closures (setTimeout
+    // in armBurnTimer) keep a non-null type — TS drops narrowing across them.
+    const db = realtimeDb;
+
+    const messagesRef = ref(db, `chats/${requestId}/messages`);
     const key = deriveChatKey(request.sender, request.receiver);
 
     console.log(`[ChatRoom] Subscribing to read path: chats/${requestId}/messages`);
     console.log("[ChatRoom] Firebase Auth currentUser (read):", getAuth(realtimeDb.app).currentUser);
+
+    // Arm a 30s self-destruct countdown for one incoming burn message.
+    const armBurnTimer = (msgId: string) => {
+      const burnTimers = burnTimersRef.current;
+      if (burnTimers[msgId]) return; // already armed — never double-arm
+
+      const timer = setTimeout(() => {
+        // 1) Delete the message from Firebase.
+        remove(ref(db, `chats/${requestId}/messages/${msgId}`)).catch(
+          (err) => {
+            console.error(`[ChatRoom] burn delete failed for ${msgId}:`, err);
+          },
+        );
+        // 2) Remove it from local React state.
+        setMessages((prev) => prev.filter((m) => m.id !== msgId));
+        // 3) Drop the spent timer entry.
+        delete burnTimersRef.current[msgId];
+      }, BURN_AFTER_MS);
+
+      burnTimers[msgId] = timer;
+      console.log(`[ChatRoom] armed burn timer for ${msgId} (${BURN_AFTER_MS}ms)`);
+    };
+
+    const clearBurnTimer = (msgId: string) => {
+      const burnTimers = burnTimersRef.current;
+      const timer = burnTimers[msgId];
+      if (timer) {
+        clearTimeout(timer);
+        delete burnTimers[msgId];
+      }
+    };
 
     const unsubscribe = onValue(
       messagesRef,
@@ -134,6 +192,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
         }
 
         const loaded: ChatMessage[] = [];
+        const presentIds = new Set<string>();
 
         Object.entries(data).forEach(([id, value]: [string, any]) => {
           if (
@@ -143,9 +202,11 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
           ) {
             return;
           }
+          presentIds.add(id);
           // Tip notifications are plaintext system messages, not encrypted —
           // skip decryption so they render verbatim instead of as a lock.
           const isTip = value.isTip === true;
+          const isBurn = value.isBurn === true;
           const plain = isTip ? value.text : decryptMessage(value.text, key);
           loaded.push({
             id,
@@ -154,11 +215,26 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
             timestamp: value.timestamp ?? 0,
             isMine: value.sender.toLowerCase() === address.toLowerCase(),
             isTip,
+            isBurn,
           });
         });
 
         loaded.sort((a, b) => a.timestamp - b.timestamp);
         setMessages(loaded);
+
+        // Arm self-destruct timers for incoming burn messages.
+        // Only messages from the other participant count down (sender !== me).
+        loaded.forEach((m) => {
+          if (m.isBurn && !m.isMine) {
+            armBurnTimer(m.id);
+          }
+        });
+
+        // Clear any timers for messages that are no longer present (already
+        // burned by the recipient, or removed elsewhere) to avoid leaks.
+        Object.keys(burnTimersRef.current).forEach((id) => {
+          if (!presentIds.has(id)) clearBurnTimer(id);
+        });
       },
       (err: any) => {
         console.error("[ChatRoom] Firebase read failed:", err);
@@ -168,6 +244,9 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
 
     return () => {
       unsubscribe();
+      // Clear every active burn timer on unmount / dep change to prevent leaks.
+      Object.values(burnTimersRef.current).forEach((timer) => clearTimeout(timer));
+      burnTimersRef.current = {};
     };
   }, [request, requestId, address]);
 
@@ -194,19 +273,22 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       const newMessageRef = push(messagesRef);
       const exactPath = `chats/${requestId}/messages/${newMessageRef.key}`;
 
+      const payload: Record<string, unknown> = {
+        sender: address,
+        text: encrypted,
+        timestamp: Date.now(),
+      };
+      // Burn-after-reading: tag the message so the recipient's client starts
+      // the 30s self-destruct countdown when it reads it.
+      if (isBurnMode) {
+        payload.isBurn = true;
+      }
+
       console.log(`[ChatRoom] Database write path: ${exactPath}`);
       console.log("[ChatRoom] Firebase Auth currentUser (write):", getAuth(realtimeDb.app).currentUser);
-      console.log("[ChatRoom] Message payload:", {
-        sender: address,
-        text: encrypted,
-        timestamp: Date.now(),
-      });
+      console.log("[ChatRoom] Message payload:", payload);
 
-      await set(newMessageRef, {
-        sender: address,
-        text: encrypted,
-        timestamp: Date.now(),
-      });
+      await set(newMessageRef, payload);
 
       setDraft("");
     } catch (err: any) {
@@ -282,6 +364,160 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
     }
   }
 
+  // Trigger the TEE behavioral Sybil check against the other chat participant.
+  async function handleCheckMlBehavior() {
+    if (!otherAddress) return;
+    setIsCheckingML(true);
+    setMlError(null);
+    setMlScore(null);
+
+    try {
+      const proxyUrl = process.env.NEXT_PUBLIC_FCC_PROXY_URL?.trim();
+      if (!proxyUrl) {
+        throw new Error(
+          "FCC proxy URL is not configured. Set NEXT_PUBLIC_FCC_PROXY_URL in .env.local.",
+        );
+      }
+
+      if (!ethers.isAddress(otherAddress)) {
+        throw new Error("Invalid participant address for behavior check.");
+      }
+
+      const originalMessage = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address"],
+        [otherAddress],
+      );
+
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 30_000);
+
+      const response = await fetch(proxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opType: "KNOCKKNOCK",
+          opCommand: "CHECK_ML_BEHAVIOR",
+          originalMessage,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(fetchTimeout);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "(could not read body)");
+        throw new Error(`FCC proxy returned HTTP ${response.status}: ${errorText}`);
+      }
+
+      const body = await response.json();
+      if (body.status !== 1 || !body.data) {
+        throw new Error(body.error ?? "FCC proxy returned an invalid ML result.");
+      }
+
+      const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+        [
+          "uint256",
+          "uint256",
+          "string[]",
+          "string",
+          "address",
+          "address",
+          "uint256",
+          "bytes",
+        ],
+        body.data,
+      ) as unknown as [
+        bigint,
+        bigint,
+        string[],
+        string,
+        string,
+        string,
+        bigint,
+        string,
+      ];
+
+      const [humanBp, botBp, explanation, modelVersion, targetAddress, signerAddress, timestamp, signature] =
+        decoded;
+
+      if (targetAddress.toLowerCase() !== otherAddress.toLowerCase()) {
+        throw new Error("TEE attestation does not match the chat participant.");
+      }
+      if (Number(humanBp) + Number(botBp) !== 10_000) {
+        throw new Error("TEE attestation returned inconsistent probabilities.");
+      }
+
+      // Reject stale attestations to prevent replay of old results.
+      const attestationAgeSeconds = Math.abs(
+        Math.floor(Date.now() / 1000) - Number(timestamp),
+      );
+      if (attestationAgeSeconds > 300) {
+        throw new Error("TEE attestation is stale.");
+      }
+
+      // Cryptographically verify the TEE signature over the attestation payload.
+      const explanationHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(["string[]"], [explanation]),
+      );
+      const signedHash = ethers.keccak256(
+        ethers.solidityPacked(
+          [
+            "bytes32",
+            "bytes32",
+            "uint256",
+            "uint256",
+            "address",
+            "address",
+            "string",
+            "uint256",
+            "bytes32",
+          ],
+          [
+            ethers.encodeBytes32String("KNOCKKNOCK"),
+            ethers.encodeBytes32String("CHECK_ML_BEHAVIOR"),
+            humanBp,
+            botBp,
+            targetAddress,
+            signerAddress,
+            modelVersion,
+            timestamp,
+            explanationHash,
+          ],
+        ),
+      );
+
+      let recoveredAddress: string;
+      try {
+        recoveredAddress = ethers.recoverAddress(signedHash, signature);
+      } catch {
+        throw new Error("TEE signature could not be recovered.");
+      }
+      if (recoveredAddress.toLowerCase() !== signerAddress.toLowerCase()) {
+        throw new Error("TEE signature is invalid.");
+      }
+
+      const expectedSigner = process.env.NEXT_PUBLIC_TEE_SIGNER_ADDRESS?.trim();
+      if (
+        expectedSigner &&
+        recoveredAddress.toLowerCase() !== expectedSigner.toLowerCase()
+      ) {
+        throw new Error("TEE signature does not match the expected signer.");
+      }
+
+      setMlScore({
+        humanProbability: Number(humanBp) / 100,
+        botProbability: Number(botBp) / 100,
+        explanation,
+        modelVersion,
+      });
+    } catch (err: any) {
+      console.error("[ChatRoom] ML behavior check failed:", err);
+      setMlError(err.message ?? "Behavior check failed");
+    } finally {
+      setIsCheckingML(false);
+    }
+  }
+
   // null-safe: stays null only while `request` is unavailable (during loading).
   const otherAddress = request
     ? address?.toLowerCase() === request.sender.toLowerCase()
@@ -345,10 +581,79 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                     With {otherAddress ? shortenAddress(otherAddress) : "unknown"}
                   </p>
                 </div>
+                <div className="ml-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCheckMlBehavior}
+                    disabled={isCheckingML || !otherAddress}
+                    className="flex items-center gap-1.5 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] px-3 py-1.5 text-xs font-bold text-[#DFD0B8] transition-all duration-200 hover:border-[#DFD0B8]/40 hover:bg-[#31363F] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isCheckingML ? (
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-[#DFD0B8]/30 border-t-[#DFD0B8]" />
+                    ) : (
+                      <span className="text-[10px] leading-none">🔍</span>
+                    )}
+                    CHECK
+                  </button>
+                  {mlScore && (
+                    <div className="group relative">
+                      <span className="rounded-full border border-[#DFD0B8]/20 bg-[#222831] px-3 py-1.5 text-xs font-bold text-[#DFD0B8]">
+                        Human {mlScore.humanProbability.toFixed(0)}% | Bot{" "}
+                        {mlScore.botProbability.toFixed(0)}% — TEE Verified
+                      </span>
+                      <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-64 -translate-x-1/2 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] p-3 text-xs text-[#DFD0B8] opacity-0 shadow-xl shadow-black/30 transition-opacity group-hover:opacity-100">
+                        <p className="mb-2 font-bold text-[#DFD0B8]">
+                          Model: {mlScore.modelVersion}
+                        </p>
+                        <ul className="list-disc space-y-1 pl-4 text-[#948979]">
+                          {mlScore.explanation.map((factor, i) => (
+                            <li key={i}>{factor}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                  {mlError && !mlScore && (
+                    <span className="rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-300"
+                    >
+                      Check failed
+                    </span>
+                  )}
+                </div>
               </div>
-              <span className="rounded-full border border-[#DFD0B8]/20 bg-[#222831] px-4 py-1.5 text-xs font-bold text-[#DFD0B8]">
-                Active
-              </span>
+              <div className="flex items-center gap-2">
+                {/* Burn-after-reading toggle */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isBurnMode}
+                  onClick={() => setIsBurnMode((v) => !v)}
+                  title="Burn after reading: messages self-destruct 30s after the recipient reads them"
+                  className={`flex items-center gap-2 rounded-full border bg-[#222831] px-3 py-1.5 text-xs font-bold text-[#DFD0B8] transition-all duration-200 ${
+                    isBurnMode
+                      ? "border-rose-400/50 shadow-[0_0_12px_rgba(244,63,94,0.25)]"
+                      : "border-[#DFD0B8]/40 hover:border-[#DFD0B8]"
+                  }`}
+                >
+                  <span
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors duration-200 ${
+                      isBurnMode ? "bg-rose-500/70" : "bg-[#948979]/40"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full bg-[#DFD0B8] shadow transition-transform duration-200 ${
+                        isBurnMode ? "translate-x-3.5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </span>
+                  <span className="flex items-center gap-1">
+                    {isBurnMode ? "Burn 🔥" : "Burn"}
+                  </span>
+                </button>
+                <span className="rounded-full border border-[#DFD0B8]/20 bg-[#222831] px-4 py-1.5 text-xs font-bold text-[#DFD0B8]">
+                  Active
+                </span>
+              </div>
             </div>
           </div>
 
@@ -399,13 +704,32 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                         {msg.isMine ? "You" : shortenAddress(msg.sender)}
                       </span>
                       <div
-                        className={`relative rounded-3xl px-5 py-3 text-sm leading-relaxed shadow-md ${
-                          msg.isMine
-                            ? "rounded-br-md bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] text-[#222831]"
-                            : "rounded-bl-md border border-[#DFD0B8]/10 bg-[#31363F] text-[#DFD0B8]"
+                        className={`flex items-end gap-1.5 ${
+                          msg.isMine ? "flex-row-reverse" : "flex-row"
                         }`}
                       >
-                        {msg.text}
+                        <div
+                          className={`relative rounded-3xl px-5 py-3 text-sm leading-relaxed shadow-md ${
+                            msg.isMine
+                              ? "rounded-br-md bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] text-[#222831]"
+                              : "rounded-bl-md border border-[#DFD0B8]/10 bg-[#31363F] text-[#DFD0B8]"
+                          }`}
+                        >
+                          {msg.text}
+                        </div>
+                        {msg.isBurn && (
+                          <span
+                            className="mb-1 text-sm leading-none text-amber-300"
+                            title={
+                              msg.isMine
+                                ? "Burn after reading — self-destructs 30s after the recipient reads it"
+                                : "Burn after reading — self-destructs in 30s"
+                            }
+                            aria-label="Burn after reading"
+                          >
+                            ⏳
+                          </span>
+                        )}
                       </div>
                       <span className="mt-1 text-[10px] text-[#948979]">
                         {new Date(msg.timestamp).toLocaleTimeString([], {
@@ -435,7 +759,11 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                 type="text"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Type an encrypted message..."
+                placeholder={
+                  isBurnMode
+                    ? "Type a burn-after-reading message..."
+                    : "Type an encrypted message..."
+                }
                 disabled={sending || isTipping}
                 className="flex-1 rounded-2xl border border-[#948979]/50 bg-[#222831] px-5 py-3.5 text-sm text-[#DFD0B8] transition-all duration-200 placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/50 disabled:cursor-not-allowed disabled:opacity-60"
               />
@@ -478,7 +806,9 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
               </button>
             </div>
             <p className="mt-2 text-xs text-[#948979]">
-              Messages are encrypted client-side before reaching Firebase.
+              {isBurnMode
+                ? "Burn mode on — messages self-destruct 30s after the recipient reads them. Encryption unchanged."
+                : "Messages are encrypted client-side before reaching Firebase."}
             </p>
           </form>
 

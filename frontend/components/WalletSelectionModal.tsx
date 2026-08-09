@@ -23,15 +23,34 @@ interface WalletSelectionModalProps {
   onCancel: () => void;
 }
 
-/** Emoji glyph used as a lightweight icon per wallet. */
-function walletGlyph(id: string): string {
-  return id === "phantom" ? "👻" : "🦊";
+/**
+ * Sleek, generic inline wallet icon. No external assets — just a clean
+ * stroke-based glyph that matches the premium KnockKnock aesthetic.
+ */
+function WalletIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a2 2 0 0 1 2 2v0H5.5" />
+      <path d="M3 7.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-3" />
+      <path d="M21 9.5V12a1.5 1.5 0 0 1-1.5 1.5H16a1.5 1.5 0 0 1 0-3h3.5a1.5 1.5 0 0 1 1.5 1.5z" />
+    </svg>
+  );
 }
 
 /**
  * Small modal that lets the user choose between MetaMask and Phantom when both
  * are installed. Uses the app's color palette (bg-[#222831] / bg-[#393E46] /
  * text-[#DFD0B8]) and mirrors the styling of the existing edit-nickname modal.
+ * No emojis — clean, professional inline SVG icons only.
  */
 export default function WalletSelectionModal({
   open,
@@ -51,8 +70,8 @@ export default function WalletSelectionModal({
     >
       <div className="w-full max-w-sm rounded-3xl border border-[#DFD0B8]/15 bg-[#393E46] p-6 shadow-2xl shadow-black/40">
         <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#222831] text-xl ring-1 ring-[#DFD0B8]/10">
-            👛
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#222831] text-[#DFD0B8] ring-1 ring-[#DFD0B8]/10">
+            <WalletIcon className="h-5 w-5" />
           </div>
           <div className="min-w-0">
             <h3 className="text-base font-bold text-[#DFD0B8]">Choose a wallet</h3>
@@ -71,8 +90,8 @@ export default function WalletSelectionModal({
               disabled={isConnecting}
               className="flex items-center gap-3 rounded-2xl border border-[#DFD0B8]/15 bg-[#222831] px-4 py-3.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[#DFD0B8]/40 hover:shadow-lg hover:shadow-black/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
-              <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-xl">
-                {walletGlyph(wallet.id)}
+              <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-[#DFD0B8]">
+                <WalletIcon className="h-5 w-5" />
               </span>
               <span className="flex-1">
                 <span className="block text-sm font-bold text-[#DFD0B8]">

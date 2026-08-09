@@ -49,3 +49,104 @@ export interface PassportScoreResponse {
   };
   error?: string;
 }
+
+/**
+ * Private input supplied to the TEE Twitter verification job. ABI-encoded as
+ * `["address", "string"]` and passed as the originalMessage.
+ */
+export interface TwitterVerificationRequest {
+  /** Sender wallet address (private input, used as the FDC request salt). */
+  address: string;
+  /** Twitter handle to verify, without the leading @. */
+  twitterHandle: string;
+}
+
+/** Public output returned by the TEE Twitter verification job. */
+export interface TwitterVerificationResponse {
+  /** Whether the FDC attestation confirmed the handle is a verified account. */
+  isTwitterVerified: boolean;
+  /** The handle that was attested, echoed back for binding. */
+  twitterHandle: string;
+  /** FDC request hash / attestation id for auditability. */
+  attestationId: string;
+}
+
+/**
+ * Private input supplied to the TEE behavioral Sybil-detection job.
+ * ABI-encoded as `["address"]` and passed as the originalMessage.
+ */
+export interface MlBehaviorRequest {
+  /** Wallet address whose on-chain behavior will be analyzed. */
+  targetAddress: string;
+}
+
+/**
+ * Public output returned by the TEE behavioral Sybil-detection job.
+ * Probabilities are returned as basis points (0–10000) so the response can be
+ * ABI-encoded for Solidity consumption without floating-point types.
+ */
+export interface MlBehaviorResponse {
+  /** Probability the wallet is human, in basis points (0–10000). */
+  humanProbability: number;
+  /** Probability the wallet is a bot, in basis points (0–10000). */
+  botProbability: number;
+  /** Top three human-readable factors driving the prediction. */
+  explanation: string[];
+  /** Model version string for auditability. */
+  modelVersion: string;
+  /** Wallet address the attestation was computed for. */
+  targetAddress: string;
+  /** Address of the TEE signer that produced the attestation. */
+  signerAddress: string;
+  /** Unix timestamp (seconds) when the attestation was produced. */
+  timestamp: number;
+  /**
+   * ECDSA signature over
+   *   keccak256(opType || opCommand || humanProbability || botProbability || targetAddress || signerAddress || modelVersion || timestamp || explanationHash).
+   */
+  signature: string;
+}
+
+/**
+ * FDC Web2Json attestation request body.
+ * @dev Mirrors the Flare Data Connector `Web2Json` request schema. The
+ *      `data.jmespathExpression` field is the JMESPath rule that extracts the
+ *      `verified` boolean (or follower count) from the Twitter API response.
+ */
+export interface FdcWeb2JsonRequest {
+  /** Attestation type, e.g. "Web2Json" (encoded to bytes32 by the verifier). */
+  attestationType: string;
+  /** Data source id for the FDC, e.g. "twitter". */
+  sourceId: string;
+  /** Monotonic request id, 0 for single-shot attestations. */
+  requestId: number;
+  /** Web2 fetch parameters. */
+  data: {
+    /** Full Twitter v2 URL (or mock endpoint) to fetch. */
+    url: string;
+    /** JSON-encoded request headers (e.g. the bearer token). */
+    headers: string;
+    /** JSON-encoded POST parameters, empty for GET. */
+    postParameters: string;
+    /** JSON-encoded request body, empty for GET. */
+    body: string;
+    /** Expected response type for ABI decoding. */
+    responseType: string;
+    /** HTTP method, "GET" or "POST". */
+    httpMethod: string;
+    /** JMESPath expression selecting the field to attest. */
+    jmespathExpression: string;
+  };
+}
+
+/** Status payload returned by the FDC verifier while polling. */
+export interface FdcAttestationStatus {
+  status: "WAITING" | "PENDING" | "DONE" | "REJECTED" | string;
+  response?: {
+    encodedData?: string;
+    abiEncodedRequest?: string;
+    merkleProof?: unknown;
+  };
+  error?: string;
+  message?: string;
+}

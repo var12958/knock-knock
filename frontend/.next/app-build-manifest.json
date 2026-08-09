@@ -16,10 +16,20 @@
       "static/chunks/main-app.js",
       "static/chunks/app/onboard/page.js"
     ],
+    "/chat/[requestId]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/chat/[requestId]/page.js"
+    ],
     "/send/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/send/page.js"
+    ],
+    "/_not-found/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/_not-found/page.js"
     ]
   }
 }

@@ -3,14 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ethers, Interface } from "ethers";
+import { set as fbSet, ref as fbRef } from "firebase/database";
 import { useWeb3 } from "@/context/Web3Context";
+import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import {
   getMailboxContractWrite,
   getFCCVerifierContractWrite,
   MAILBOX_ADDRESS,
+  MAILBOX_ABI,
   FCC_VERIFIER_ADDRESS,
   FCC_VERIFIER_ABI,
 } from "@/lib/contracts";
+import { realtimeDb } from "@/lib/firebase";
 import { encodePreview } from "@/lib/encodePreview";
 import { publishChatRequest } from "@/lib/firebaseFunctions";
 import { COSTON2_CHAIN_ID } from "@/lib/chain";
@@ -27,11 +31,30 @@ const PROOF_POLL_INTERVAL_MS = 3_000;
 /** Give up on proof polling after this many attempts. */
 const PROOF_POLL_MAX_ATTEMPTS = 40;
 
+/** Maximum number of comma-separated receivers allowed in one Group Knock. */
+const MAX_RECEIVERS = 3;
+
 type SendStatus =
   | { stage: "idle" }
-  | { stage: "requesting" }
-  | { stage: "waiting-proof"; requestHash: string }
-  | { stage: "submitting" }
+  | {
+      stage: "requesting";
+      current: number;
+      total: number;
+      receiver: string;
+    }
+  | {
+      stage: "waiting-proof";
+      current: number;
+      total: number;
+      receiver: string;
+      requestHash: string;
+    }
+  | {
+      stage: "submitting";
+      current: number;
+      total: number;
+      receiver: string;
+    }
   | { stage: "done"; txHash: string };
 
 interface SendRequestFormProps {
@@ -41,7 +64,8 @@ interface SendRequestFormProps {
 
 export default function SendRequestForm({ onMessageSent }: SendRequestFormProps) {
   const { signer, address, chainId } = useWeb3();
-  const [receiver, setReceiver] = useState("");
+  const { user } = useFirebaseAuth();
+  const [receiversString, setReceiversString] = useState("");
   const [preview, setPreview] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -103,21 +127,6 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       return;
     }
 
-    if (!MAILBOX_ADDRESS || MAILBOX_ADDRESS === "0x" + "0".repeat(40)) {
-      setErrorIfMounted("Mailbox contract address is not configured.");
-      return;
-    }
-
-    if (!FCC_VERIFIER_ADDRESS || FCC_VERIFIER_ADDRESS === "0x" + "0".repeat(40)) {
-      setErrorIfMounted("FCC verifier contract address is not configured.");
-      return;
-    }
-
-    if (!ethers.isAddress(receiver)) {
-      setErrorIfMounted("Please enter a valid Flare wallet address.");
-      return;
-    }
-
     if (!preview.trim()) {
       setErrorIfMounted("Preview message cannot be empty.");
       return;
@@ -130,11 +139,57 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       return;
     }
 
+    if (!MAILBOX_ADDRESS || MAILBOX_ADDRESS === "0x" + "0".repeat(40)) {
+      setErrorIfMounted("Mailbox contract address is not configured.");
+      return;
+    }
+
+    if (!FCC_VERIFIER_ADDRESS || FCC_VERIFIER_ADDRESS === "0x" + "0".repeat(40)) {
+      setErrorIfMounted("FCC verifier contract address is not configured.");
+      return;
+    }
+
     const proxyUrl = process.env.NEXT_PUBLIC_FCC_PROXY_URL?.trim();
     if (!proxyUrl) {
       setErrorIfMounted(
         "FCC proxy URL is not configured. Set NEXT_PUBLIC_FCC_PROXY_URL in frontend/.env.local (e.g. http://localhost:7702/action for local dev)."
       );
+      return;
+    }
+
+    // Parse the comma-separated receiver list: trim, drop empties, and
+    // case-insensitively de-duplicate while preserving entry order. Enforce the
+    // max-receiver cap and validate each remaining address.
+    const rawReceivers = receiversString
+      .split(",")
+      .map((addr) => addr.trim())
+      .filter((addr) => addr.length > 0);
+
+    if (rawReceivers.length === 0) {
+      setErrorIfMounted("Please enter at least one Flare wallet address.");
+      return;
+    }
+
+    const seen = new Set<string>();
+    const receiversArray = rawReceivers.filter((addr) => {
+      const key = addr.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (receiversArray.length > MAX_RECEIVERS) {
+      setErrorIfMounted(
+        `You can knock at most ${MAX_RECEIVERS} addresses at once.`
+      );
+      return;
+    }
+
+    const invalidAddress = receiversArray.find(
+      (addr) => !ethers.isAddress(addr),
+    );
+    if (invalidAddress) {
+      setErrorIfMounted(`Invalid Flare wallet address: ${invalidAddress}`);
       return;
     }
 
@@ -158,124 +213,274 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       );
       const encodedPreview = encodePreview(preview);
 
-      const originalMessage = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "address", "string", "uint256", "uint256", "address"],
-        [address, receiver, encodedPreview, deadline, BigInt(COSTON2_CHAIN_ID), MAILBOX_ADDRESS]
-      );
-      console.log("[SendRequestForm] encoded originalMessage:", originalMessage);
-
-      console.log("[SendRequestForm] calling verifier.requestVerification...");
-      setStatusIfMounted({ stage: "requesting" });
+      // Shared contract instances — created once, reused for each receiver.
       const verifier = getFCCVerifierContractWrite(signer);
-      const requestTx = await verifier.requestVerification(
-        receiver,
-        encodedPreview,
-        deadline,
-        MAILBOX_ADDRESS,
-        { value: 0 }
-      );
-      console.log("[SendRequestForm] MetaMask signed requestVerification tx:", requestTx.hash);
-
-      console.log("[SendRequestForm] waiting for requestVerification to mine...");
-      const requestReceipt = await requestTx.wait();
-      if (!requestReceipt) {
-        throw new Error("Verification request transaction did not mine.");
-      }
-      console.log("[SendRequestForm] requestVerification mined in block:", requestReceipt.blockNumber);
-
-      const iface = new Interface(FCC_VERIFIER_ABI);
-      const verificationLog = requestReceipt.logs
-        .map((log: ethers.Log) => {
-          try {
-            return iface.parseLog(log);
-          } catch {
-            return null;
-          }
-        })
-        .find((parsed: ethers.LogDescription | null) => parsed?.name === "VerificationRequested");
-
-      if (!verificationLog) {
-        throw new Error("Could not find VerificationRequested event in the transaction receipt.");
-      }
-      const requestHash = verificationLog.args.requestHash as string;
-      console.log("[SendRequestForm] extracted requestHash:", requestHash);
-      setStatusIfMounted({ stage: "waiting-proof", requestHash });
-
-      console.log("[SendRequestForm] fetching TEE proof from proxy...");
-      const proof = await fetchProof(proxyUrl, originalMessage, requestHash, abortController.signal);
-      console.log("[SendRequestForm] proof received:", {
-        isVerifiedHuman: proof.isVerifiedHuman,
-        isOldEnoughWallet: proof.isOldEnoughWallet,
-      });
-
-      console.log("[SendRequestForm] calling mailbox.sendRequestWithProof...");
-      setStatusIfMounted({ stage: "submitting" });
       const mailbox = getMailboxContractWrite(signer);
+      const verifierIface = new Interface(FCC_VERIFIER_ABI);
+      const mailboxIface = new Interface(MAILBOX_ABI);
 
-      // Normalize argument types to exactly match the contract ABI:
-      // address, string, bool, bool, uint256, bytes32, bytes
-      const normalizedReceiver = ethers.getAddress(receiver);
-      const normalizedDeadline = BigInt(deadline);
-      const normalizedRequestHash =
-        requestHash.length === 66 && requestHash.startsWith("0x")
-          ? requestHash
-          : ethers.zeroPadValue(requestHash, 32);
-      const normalizedSignature =
-        typeof proof.signature === "string" && proof.signature.startsWith("0x")
-          ? proof.signature
-          : ethers.hexlify(proof.signature);
+      const total = receiversArray.length;
+      const requestIds: string[] = [];
+      let lastTxHash = "";
 
-      console.log(
-        "[SendRequestForm] exact _receiver passed to sendRequestWithProof:",
-        normalizedReceiver
-      );
-      console.log("[DEBUG] Args:", {
-        receiver: normalizedReceiver,
-        encodedPreview,
-        isVerifiedHuman: Boolean(proof.isVerifiedHuman),
-        isOldEnoughWallet: Boolean(proof.isOldEnoughWallet),
-        deadline: normalizedDeadline,
-        requestHash: normalizedRequestHash,
-        signature: normalizedSignature,
-      });
-
-      let submitTx;
-      try {
-        submitTx = await mailbox.sendRequestWithProof(
-          normalizedReceiver,
-          encodedPreview,
-          Boolean(proof.isVerifiedHuman),
-          Boolean(proof.isOldEnoughWallet),
-          normalizedDeadline,
-          normalizedRequestHash,
-          normalizedSignature
+      // Loop through each receiver sequentially: request a TEE proof, wait for
+      // the proof, submit it to the mailbox, and wait for THAT transaction to
+      // mine before starting the next receiver. The requestId emitted in each
+      // `RequestSent` event is collected for the group mapping.
+      for (let i = 0; i < receiversArray.length; i++) {
+        const receiverAddr = ethers.getAddress(receiversArray[i]);
+        const current = i + 1;
+        console.log(
+          `[SendRequestForm] sending knock ${current}/${total} to ${receiverAddr}`
         );
-        console.log("[SendRequestForm] MetaMask signed sendRequestWithProof tx:", submitTx.hash);
-      } catch (sendErr: any) {
-        console.error("[DEBUG] sendRequestWithProof FAILED:", sendErr);
-        console.error("[DEBUG] sendRequestWithProof FAILED code:", sendErr?.code);
-        console.error("[DEBUG] sendRequestWithProof FAILED reason:", sendErr?.reason);
-        console.error("[DEBUG] sendRequestWithProof FAILED action:", sendErr?.action);
-        console.error("[DEBUG] sendRequestWithProof FAILED transaction:", sendErr?.transaction);
-        throw sendErr;
+
+        // Each receiver needs its own originalMessage because the receiver
+        // address is part of the attested payload.
+        const originalMessage = ethers.AbiCoder.defaultAbiCoder().encode(
+          ["address", "address", "string", "uint256", "uint256", "address"],
+          [
+            address,
+            receiverAddr,
+            encodedPreview,
+            deadline,
+            BigInt(COSTON2_CHAIN_ID),
+            MAILBOX_ADDRESS,
+          ]
+        );
+        console.log(
+          `[SendRequestForm] encoded originalMessage for ${receiverAddr}:`,
+          originalMessage
+        );
+
+        console.log("[SendRequestForm] calling verifier.requestVerification...");
+        setStatusIfMounted({
+          stage: "requesting",
+          current,
+          total,
+          receiver: receiverAddr,
+        });
+        const requestTx = await verifier.requestVerification(
+          receiverAddr,
+          encodedPreview,
+          deadline,
+          MAILBOX_ADDRESS,
+          { value: 0 }
+        );
+        console.log(
+          "[SendRequestForm] MetaMask signed requestVerification tx:",
+          requestTx.hash
+        );
+
+        console.log("[SendRequestForm] waiting for requestVerification to mine...");
+        const requestReceipt = await requestTx.wait();
+        if (!requestReceipt) {
+          throw new Error("Verification request transaction did not mine.");
+        }
+        console.log(
+          "[SendRequestForm] requestVerification mined in block:",
+          requestReceipt.blockNumber
+        );
+
+        const verificationLog = requestReceipt.logs
+          .map((log: ethers.Log) => {
+            try {
+              return verifierIface.parseLog(log);
+            } catch {
+              return null;
+            }
+          })
+          .find(
+            (parsed: ethers.LogDescription | null) =>
+              parsed?.name === "VerificationRequested"
+          );
+
+        if (!verificationLog) {
+          throw new Error(
+            "Could not find VerificationRequested event in the transaction receipt."
+          );
+        }
+        const requestHash = verificationLog.args.requestHash as string;
+        console.log(
+          `[SendRequestForm] extracted requestHash for ${receiverAddr}:`,
+          requestHash
+        );
+        setStatusIfMounted({
+          stage: "waiting-proof",
+          current,
+          total,
+          receiver: receiverAddr,
+          requestHash,
+        });
+
+        console.log("[SendRequestForm] fetching TEE proof from proxy...");
+        const proof = await fetchProof(
+          proxyUrl,
+          originalMessage,
+          requestHash,
+          abortController.signal
+        );
+        console.log("[SendRequestForm] proof received:", {
+          isVerifiedHuman: proof.isVerifiedHuman,
+          isOldEnoughWallet: proof.isOldEnoughWallet,
+        });
+
+        console.log("[SendRequestForm] calling mailbox.sendRequestWithProof...");
+        setStatusIfMounted({
+          stage: "submitting",
+          current,
+          total,
+          receiver: receiverAddr,
+        });
+
+        // Normalize argument types to exactly match the contract ABI:
+        // address, string, bool, bool, uint256, bytes32, bytes
+        const normalizedReceiver = receiverAddr;
+        const normalizedDeadline = BigInt(deadline);
+        const normalizedRequestHash =
+          requestHash.length === 66 && requestHash.startsWith("0x")
+            ? requestHash
+            : ethers.zeroPadValue(requestHash, 32);
+        const normalizedSignature =
+          typeof proof.signature === "string" && proof.signature.startsWith("0x")
+            ? proof.signature
+            : ethers.hexlify(proof.signature);
+
+        console.log(
+          "[SendRequestForm] exact _receiver passed to sendRequestWithProof:",
+          normalizedReceiver
+        );
+        console.log("[DEBUG] Args:", {
+          receiver: normalizedReceiver,
+          encodedPreview,
+          isVerifiedHuman: Boolean(proof.isVerifiedHuman),
+          isOldEnoughWallet: Boolean(proof.isOldEnoughWallet),
+          deadline: normalizedDeadline,
+          requestHash: normalizedRequestHash,
+          signature: normalizedSignature,
+        });
+
+        let submitTx;
+        try {
+          submitTx = await mailbox.sendRequestWithProof(
+            normalizedReceiver,
+            encodedPreview,
+            Boolean(proof.isVerifiedHuman),
+            Boolean(proof.isOldEnoughWallet),
+            normalizedDeadline,
+            normalizedRequestHash,
+            normalizedSignature
+          );
+          console.log(
+            "[SendRequestForm] MetaMask signed sendRequestWithProof tx:",
+            submitTx.hash
+          );
+        } catch (sendErr: any) {
+          console.error("[DEBUG] sendRequestWithProof FAILED:", sendErr);
+          console.error("[DEBUG] sendRequestWithProof FAILED code:", sendErr?.code);
+          console.error("[DEBUG] sendRequestWithProof FAILED reason:", sendErr?.reason);
+          console.error("[DEBUG] sendRequestWithProof FAILED action:", sendErr?.action);
+          console.error("[DEBUG] sendRequestWithProof FAILED transaction:", sendErr?.transaction);
+          throw sendErr;
+        }
+
+        console.log("[SendRequestForm] waiting for sendRequestWithProof to mine...");
+        const submitReceipt = await submitTx.wait();
+        if (!submitReceipt || submitReceipt.status !== 1) {
+          throw new Error("Mailbox transaction failed on-chain.");
+        }
+        console.log(
+          "[SendRequestForm] sendRequestWithProof MINED:",
+          submitReceipt.hash
+        );
+
+        // Extract the on-chain requestId from the `RequestSent` event so we can
+        // group multiple knocks together.
+        const sentLog = submitReceipt.logs
+          .map((log: ethers.Log) => {
+            try {
+              return mailboxIface.parseLog(log);
+            } catch {
+              return null;
+            }
+          })
+          .find(
+            (parsed: ethers.LogDescription | null) =>
+              parsed?.name === "RequestSent"
+          );
+        if (!sentLog) {
+          throw new Error(
+            "Could not find RequestSent event in the transaction receipt."
+          );
+        }
+        const requestId = (sentLog.args.requestId as bigint).toString();
+        requestIds.push(requestId);
+        lastTxHash = submitReceipt.hash;
+        console.log(
+          `[SendRequestForm] knock ${current}/${total} requestId=${requestId} tx=${submitReceipt.hash}`
+        );
+
+        // Firebase sync is non-critical per-receiver: it must not abort the
+        // group send. A failure here only means the inbox notification may lag.
+        try {
+          await publishChatRequest({ txHash: submitReceipt.hash });
+          console.log(
+            `[SendRequestForm] publishChatRequest succeeded for ${requestId}`
+          );
+        } catch (publishErr: any) {
+          console.error(
+            `[SendRequestForm] publishChatRequest failed for ${requestId}:`,
+            publishErr
+          );
+        }
       }
 
-      console.log("[SendRequestForm] waiting for sendRequestWithProof to mine...");
-      const submitReceipt = await submitTx.wait();
-      if (!submitReceipt || submitReceipt.status !== 1) {
-        throw new Error("Mailbox transaction failed on-chain.");
-      }
-      console.log("[SendRequestForm] sendRequestWithProof MINED:", submitReceipt.hash);
+      // As soon as every on-chain sendRequestWithProof has mined, flip the
+      // success guard. This is checked first in the render so no later error
+      // or status update can hide the success message.
+      setIsSuccessIfMounted(true);
+      console.log("[SendRequestForm] isSuccess set to TRUE");
 
-      // Set success state immediately after mining. Wrapped in try/catch so
-      // any React state error is surfaced and cannot be silently swallowed.
+      // If more than one receiver was knocked, persist a group mapping so the
+      // sidebar can render the multi-party chat as a single Group Chat card.
+      // The mapping is written to groups/{uid}/{groupId} from the client; the
+      // database rules allow each user to write only their own subtree.
+      if (requestIds.length > 1 && user?.uid) {
+        const groupId = "group_" + Date.now();
+        const createdAt = Date.now();
+        if (realtimeDb) {
+          try {
+            await fbSet(fbRef(realtimeDb, `groups/${user.uid}/${groupId}`), {
+              requestIds,
+              createdAt,
+            });
+            console.log(
+              "[SendRequestForm] saved group mapping",
+              groupId,
+              requestIds
+            );
+          } catch (groupErr: any) {
+            // Non-fatal: the individual knocks are already on-chain.
+            console.error(
+              "[SendRequestForm] failed to save group mapping:",
+              groupErr
+            );
+            setErrorIfMounted(
+              `Knocks are on-chain, but the group mapping failed to save: ${
+                groupErr.message ?? "Unknown error"
+              }.`
+            );
+          }
+        }
+      }
+
+      // Final bookkeeping: persist the last transaction hash and mark the
+      // status done for any downstream progress UI.
       try {
-        setTxHashIfMounted(submitReceipt.hash);
-        setStatusIfMounted({ stage: "done", txHash: submitReceipt.hash });
-        setIsSuccessIfMounted(true);
-        console.log("[SendRequestForm] isSuccess set to TRUE");
+        setTxHashIfMounted(lastTxHash);
+        setStatusIfMounted({ stage: "done", txHash: lastTxHash });
+        console.log("[SendRequestForm] status set to done");
       } catch (stateErr) {
-        console.error("[SendRequestForm] Failed to set success state:", stateErr);
+        console.error("[SendRequestForm] Failed to set final state:", stateErr);
         throw stateErr;
       }
 
@@ -285,18 +490,6 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
         console.log("[SendRequestForm] onMessageSent callback invoked");
       } catch (callbackErr) {
         console.error("[SendRequestForm] onMessageSent callback failed:", callbackErr);
-      }
-
-      // Firebase sync is non-critical: it must not reset success state.
-      try {
-        await publishChatRequest({ txHash: submitReceipt.hash });
-        console.log("[SendRequestForm] publishChatRequest succeeded");
-      } catch (publishErr: any) {
-        console.error("[SendRequestForm] publishChatRequest failed:", publishErr);
-        setErrorIfMounted(
-          `Request is on-chain, but Firebase sync failed: ${publishErr.message ?? "Unknown error"}. ` +
-            "The receiver may need to finish onboarding before chat access works."
-        );
       }
     } catch (err: any) {
       console.error("[SendRequestForm] transaction failed:", err);
@@ -308,96 +501,13 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
     }
   }
 
-  /**
-   * Fetch a TEE-signed proof from the configured proxy.
-   */
-  async function fetchProof(
-    proxyUrl: string,
-    originalMessage: string,
-    expectedRequestHash: string,
-    signal?: AbortSignal
-  ): Promise<{
-    isVerifiedHuman: boolean;
-    isOldEnoughWallet: boolean;
-    signature: string;
-  }> {
-    const payload = {
-      opType: "KNOCKKNOCK",
-      opCommand: "VERIFY_SENDER",
-      originalMessage,
-    };
-
-    function throwIfAborted(): void {
-      if (signal?.aborted) {
-        throw new Error("Verification cancelled.");
-      }
-    }
-
-    for (let attempt = 0; attempt < PROOF_POLL_MAX_ATTEMPTS; attempt++) {
-      throwIfAborted();
-      console.log(`[SendRequestForm] polling proxy attempt ${attempt + 1}/${PROOF_POLL_MAX_ATTEMPTS}`);
-      const response = await fetch(proxyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`FCC proxy returned HTTP ${response.status}`);
-      }
-
-      const body = await response.json();
-
-      if (body.status === 0) {
-        if (attempt === PROOF_POLL_MAX_ATTEMPTS - 1) {
-          throw new Error(body.error ?? "Timed out waiting for the TEE signature.");
-        }
-        await sleep(PROOF_POLL_INTERVAL_MS);
-        continue;
-      }
-
-      if (body.status !== 1 || !body.data) {
-        throw new Error(body.error ?? "FCC proxy returned an invalid proof.");
-      }
-
-      const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
-        ["bool", "bool", "bytes32", "bytes"],
-        body.data
-      ) as unknown as [boolean, boolean, string, string];
-
-      const [isVerifiedHuman, isOldEnoughWallet, returnedRequestHash, signature] = decoded;
-
-      if (returnedRequestHash.toLowerCase() !== expectedRequestHash.toLowerCase()) {
-        throw new Error("TEE proof request hash does not match the on-chain request.");
-      }
-
-      return { isVerifiedHuman, isOldEnoughWallet, signature };
-    }
-
-    throw new Error("Timed out waiting for the TEE signature.");
-  }
-
+  // Absolute first branch of the render: once success is set, nothing else
+  // in this component is allowed to override it.
   if (isSuccess) {
-    console.log("Rendering success screen");
     return (
-      <div className="rounded-2xl border border-[#DFD0B8]/20 bg-[#222831] p-10 text-center shadow-inner">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#DFD0B8] text-2xl text-[#222831] shadow-[0_0_20px_rgba(223,208,184,0.3)]">
-          ✓
-        </div>
-        <h3 className="mb-3 text-2xl font-bold text-[#DFD0B8]">Knock sent successfully</h3>
-        <p className="mb-8 text-sm text-[#948979]">
-          Your TEE-verified request is on-chain and waiting for the receiver.
-        </p>
-        {txHash && (
-          <p className="mb-8 break-all text-xs text-[#948979]">
-            Tx: {txHash}
-          </p>
-        )}
-        <Link
-          href="/inbox"
-          className="inline-flex items-center rounded-2xl bg-[#DFD0B8] px-6 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
-        >
+      <div className="bg-[#393E46] text-[#DFD0B8] p-6 rounded-xl border border-[#DFD0B8]/10">
+        ✅ Message sent successfully!{" "}
+        <Link href="/inbox" className="underline">
           Go to Inbox
         </Link>
       </div>
@@ -415,19 +525,22 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
 
       <div className="mb-6">
         <label
-          htmlFor="receiver"
+          htmlFor="receivers"
           className="mb-2 block text-sm font-semibold text-[#DFD0B8]"
         >
-          Receiver address
+          Receiver address(es)
+          <span className="ml-2 text-xs font-normal text-[#948979]">
+            (up to {MAX_RECEIVERS}, comma-separated for a Group Knock)
+          </span>
         </label>
-        <input
-          id="receiver"
-          type="text"
-          value={receiver}
-          onChange={(e) => setReceiver(e.target.value)}
-          placeholder="0x..."
+        <textarea
+          id="receivers"
+          value={receiversString}
+          onChange={(e) => setReceiversString(e.target.value)}
+          placeholder={`Up to ${MAX_RECEIVERS} comma-separated Flare addresses, e.g. 0xA1…, 0xB2…, 0xC3…`}
+          rows={2}
           disabled={!isConnected || isSending}
-          className="w-full rounded-xl border border-[#948979]/50 bg-[#222831] px-4 py-3.5 text-sm text-[#DFD0B8] transition-all duration-200 placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full resize-none rounded-xl border border-[#948979]/50 bg-[#222831] px-4 py-3.5 text-sm text-[#DFD0B8] transition-all duration-200 placeholder:text-[#948979]/60 focus:border-[#DFD0B8] focus:outline-none focus:ring-1 focus:ring-[#DFD0B8]/50 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
@@ -491,18 +604,89 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
   );
 }
 
+async function fetchProof(
+  proxyUrl: string,
+  originalMessage: string,
+  expectedRequestHash: string,
+  signal?: AbortSignal
+): Promise<{
+  isVerifiedHuman: boolean;
+  isOldEnoughWallet: boolean;
+  signature: string;
+}> {
+  const payload = {
+    opType: "KNOCKKNOCK",
+    opCommand: "VERIFY_SENDER",
+    originalMessage,
+  };
+
+  function throwIfAborted(): void {
+    if (signal?.aborted) {
+      throw new Error("Verification cancelled.");
+    }
+  }
+
+  for (let attempt = 0; attempt < PROOF_POLL_MAX_ATTEMPTS; attempt++) {
+    throwIfAborted();
+    console.log(`[SendRequestForm] polling proxy attempt ${attempt + 1}/${PROOF_POLL_MAX_ATTEMPTS}`);
+    const response = await fetch(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`FCC proxy returned HTTP ${response.status}`);
+    }
+
+    const body = await response.json();
+
+    if (body.status === 0) {
+      if (attempt === PROOF_POLL_MAX_ATTEMPTS - 1) {
+        throw new Error(body.error ?? "Timed out waiting for the TEE signature.");
+      }
+      await sleep(PROOF_POLL_INTERVAL_MS);
+      continue;
+    }
+
+    if (body.status !== 1 || !body.data) {
+      throw new Error(body.error ?? "FCC proxy returned an invalid proof.");
+    }
+
+    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["bool", "bool", "bytes32", "bytes"],
+      body.data
+    ) as unknown as [boolean, boolean, string, string];
+
+    const [isVerifiedHuman, isOldEnoughWallet, returnedRequestHash, signature] = decoded;
+
+    if (returnedRequestHash.toLowerCase() !== expectedRequestHash.toLowerCase()) {
+      throw new Error("TEE proof request hash does not match the on-chain request.");
+    }
+
+    return { isVerifiedHuman, isOldEnoughWallet, signature };
+  }
+
+  throw new Error("Timed out waiting for the TEE signature.");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shortenAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 function progressLabel(status: SendStatus): string {
   switch (status.stage) {
     case "requesting":
-      return "Requesting TEE verification…";
+      return `Requesting TEE verification (${status.current}/${status.total})…`;
     case "waiting-proof":
-      return "Waiting for TEE signature…";
+      return `Waiting for TEE signature (${status.current}/${status.total})…`;
     case "submitting":
-      return "Submitting proof…";
+      return `Submitting proof (${status.current}/${status.total})…`;
     default:
       return "Sending Knock…";
   }
@@ -511,11 +695,17 @@ function progressLabel(status: SendStatus): string {
 function progressDetail(status: SendStatus): string {
   switch (status.stage) {
     case "requesting":
-      return "Transaction 1/2: posting the private verification job to the Flare TEE network.";
+      return `Knock ${status.current}/${status.total} → ${shortenAddress(
+        status.receiver
+      )}: posting the private verification job to the Flare TEE network.`;
     case "waiting-proof":
-      return `Transaction 2/2 pending. Polling proxy for signed proof (request hash ${status.requestHash}).`;
+      return `Knock ${status.current}/${status.total} → ${shortenAddress(
+        status.receiver
+      )}: polling proxy for signed proof (request hash ${status.requestHash}).`;
     case "submitting":
-      return "Signed proof received — writing the chat request to the mailbox.";
+      return `Knock ${status.current}/${status.total} → ${shortenAddress(
+        status.receiver
+      )}: signed proof received — writing the chat request to the mailbox.`;
     default:
       return "";
   }
