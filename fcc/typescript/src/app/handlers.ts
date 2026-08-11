@@ -14,6 +14,7 @@ import {
   OP_COMMAND_VERIFY_TWITTER,
   OP_COMMAND_CHECK_ML_BEHAVIOR,
   ML_BEHAVIOR_MODEL_VERSION,
+  ML_MOCK_ON_FAILURE,
   MIN_WALLET_AGE_SECONDS,
   HUMANITY_SCORE_THRESHOLD,
   FLARE_RPC_URL,
@@ -47,6 +48,7 @@ import {
   analyzeWalletBehavior,
   predictBotProbability,
   generateExplanation,
+  generateMockFeatures,
 } from "./mlBehavior.js";
 
 let signer: ethers.SigningKey | null = null;
@@ -824,8 +826,19 @@ async function handleCheckMlBehavior(
   let features: number[];
   try {
     features = await analyzeWalletBehavior(request.targetAddress);
-  } catch {
-    return [null, 0, "behavior analysis failed"];
+  } catch (err) {
+    console.error("[handleCheckMlBehavior] analyzeWalletBehavior failed:", err);
+    if (ML_MOCK_ON_FAILURE) {
+      console.warn(
+        "[handleCheckMlBehavior] ML_MOCK_ON_FAILURE enabled; using deterministic mock features",
+      );
+      // A deterministic mock vector seeded from the target address. It is still
+      // signed by the TEE so the caller can see it came from the enclave, but
+      // the score is not derived from on-chain history.
+      features = generateMockFeatures(request.targetAddress);
+    } else {
+      return [null, 0, "behavior analysis failed"];
+    }
   }
 
   const { botProbability, humanProbability } = predictBotProbability(features);

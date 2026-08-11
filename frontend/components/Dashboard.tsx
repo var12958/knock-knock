@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import InboxList from "./InboxList";
 import Sidebar from "./Sidebar";
 import ChatRoom from "./ChatRoom";
 import SendRequestForm from "./SendRequestForm";
@@ -23,8 +24,7 @@ function parseChatId(pathname: string): string | null {
 
 /**
  * Parse a `/chat/group/[groupId]` path into its group id. Returns null for
- * non-group-chat routes. The group chat room UI is built later; for now this
- * only routes the card click so the sidebar can highlight it.
+ * non-group-chat routes.
  */
 function parseGroupId(pathname: string): string | null {
   const match = pathname.match(/^\/chat\/group\/([^/]+)$/);
@@ -32,7 +32,9 @@ function parseGroupId(pathname: string): string | null {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const pathname = usePathname() ?? "/";
+  const searchParams = useSearchParams();
   // Bumped after a knock is sent so the sidebar reloads its lists.
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -40,24 +42,63 @@ export default function Dashboard() {
   const groupId = parseGroupId(pathname);
   const isSend = pathname === "/send";
 
+  // Tabs are driven by a query param so the header can switch views without
+  // routing to non-existent pages.
+  const activeTab: "inbox" | "chats" | "history" =
+    searchParams.get("tab") === "chats"
+      ? "chats"
+      : searchParams.get("tab") === "history"
+      ? "history"
+      : "inbox";
+  const isTabView = !chatId && !groupId && !isSend;
+
   return (
     <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-3xl border border-[#DFD0B8]/10 bg-[#222831] shadow-2xl shadow-black/25">
-      <Sidebar refreshKey={refreshKey} />
+      <div className="flex flex-col">
+        <Sidebar refreshKey={refreshKey} />
+      </div>
 
-      <div className="flex flex-1 overflow-hidden bg-[#222831]">
-        {chatId ? (
-          <ChatRoom requestId={chatId} />
-        ) : groupId ? (
-          <GroupChatPlaceholder groupId={groupId} />
-        ) : isSend ? (
-          <div className="flex-1 overflow-y-auto p-6 sm:p-8">
-            <SendRequestForm onMessageSent={() => setRefreshKey((k) => k + 1)} />
+      <div className="flex flex-1 flex-col overflow-hidden bg-[#222831]">
+        {isTabView && (
+          <div className="flex items-center justify-between border-b border-[#DFD0B8]/10 px-6 py-4">
+            <h2 className="text-lg font-bold tracking-tight text-[#DFD0B8]">
+              {activeTab === "history"
+                ? "History"
+                : activeTab === "chats"
+                ? "Chats"
+                : "Inbox"}
+            </h2>
+            <button
+              type="button"
+              onClick={() => router.push("/send")}
+              className="rounded-xl bg-[#DFD0B8] px-5 py-2 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
+            >
+              + New Chat
+            </button>
           </div>
-        ) : chatId === null && /^\/chat\//.test(pathname) ? (
-          <InvalidChatState />
-        ) : (
-          <WelcomeState />
         )}
+
+        <div className="flex-1 overflow-hidden">
+          {chatId ? (
+            <ChatRoom requestId={chatId} />
+          ) : groupId ? (
+            <GroupChatPlaceholder groupId={groupId} />
+          ) : isSend ? (
+            <div className="h-full overflow-y-auto p-6 sm:p-8">
+              <SendRequestForm onMessageSent={() => setRefreshKey((k) => k + 1)} />
+            </div>
+          ) : chatId === null && /^\/chat\//.test(pathname) ? (
+            <InvalidChatState />
+          ) : activeTab === "inbox" ? (
+            <InboxList refreshKey={refreshKey} initialMode="pending" />
+          ) : activeTab === "chats" ? (
+            <InboxList refreshKey={refreshKey} initialMode="chats" />
+          ) : activeTab === "history" ? (
+            <InboxList refreshKey={refreshKey} initialMode="history" />
+          ) : (
+            <WelcomeState />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -65,7 +106,7 @@ export default function Dashboard() {
 
 function WelcomeState() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-10 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-4xl shadow-inner ring-1 ring-[#DFD0B8]/10">
         💬
       </div>
@@ -73,8 +114,8 @@ function WelcomeState() {
         Select a conversation
       </h3>
       <p className="max-w-sm text-sm leading-relaxed text-[#948979]">
-        Pick a chat from the sidebar to start messaging, or send a new knock to
-        start a private, end-to-end encrypted conversation on Flare.
+        Pick a chat from the sidebar to start messaging, or tap "New Chat" to
+        send a private knock on Flare.
       </p>
     </div>
   );
@@ -82,7 +123,7 @@ function WelcomeState() {
 
 function InvalidChatState() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-10 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-rose-500/20 bg-rose-500/10 text-4xl">
         ⚠️
       </div>
@@ -104,7 +145,7 @@ function InvalidChatState() {
  */
 function GroupChatPlaceholder({ groupId }: { groupId: string }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-10 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-4xl shadow-inner ring-1 ring-[#DFD0B8]/10">
         👥
       </div>

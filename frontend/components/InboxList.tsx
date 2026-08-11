@@ -8,6 +8,11 @@ import { getMailboxContractWrite } from "@/lib/contracts";
 import { decodePreview } from "@/lib/encodePreview";
 import { setNickname, subscribeNicknames } from "@/lib/firebaseContacts";
 import ProofBadge from "./ProofBadge";
+import {
+  formatMLBadge,
+  type MLBehaviorScore,
+  runMLBehaviorCheck,
+} from "@/lib/runMLBehaviorCheck";
 
 interface ChatRequest {
   requestId: string;
@@ -24,6 +29,8 @@ interface ChatRequest {
 interface InboxListProps {
   /** Increment to force a fresh fetch of pending requests. */
   refreshKey?: number;
+  /** Which tab to open first. */
+  initialMode?: Mode;
 }
 
 type Mode = "pending" | "chats" | "history";
@@ -49,11 +56,11 @@ function mapRequest(id: bigint, req: any): ChatRequest {
   };
 }
 
-export default function InboxList({ refreshKey }: InboxListProps) {
+export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
   const router = useRouter();
   const { signer, address } = useWeb3();
   const { user } = useFirebaseAuth();
-  const [mode, setMode] = useState<Mode>("pending");
+  const [mode, setMode] = useState<Mode>(initialMode ?? "pending");
 
   // Pending inbox state
   const [requests, setRequests] = useState<ChatRequest[]>([]);
@@ -74,6 +81,11 @@ export default function InboxList({ refreshKey }: InboxListProps) {
 
   // Per-user contact nicknames keyed by lowercase sender address.
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
+
+  // TEE ML behavior check results keyed by request id.
+  const [mlScores, setMlScores] = useState<Record<string, MLBehaviorScore | null>>({});
+  const [mlLoadingIds, setMlLoadingIds] = useState<Set<string>>(new Set());
+  const [mlErrors, setMlErrors] = useState<Record<string, string>>({});
 
   // Edit-nickname modal state.
   const [editing, setEditing] = useState<string | null>(null);
@@ -100,7 +112,8 @@ export default function InboxList({ refreshKey }: InboxListProps) {
         // signer-connected contract even though these are view calls.
         const signerContract = getMailboxContractWrite(signer);
 
-        console.log("[InboxList] calling getPendingRequests for address:", address);
+        console.log("[InboxList] loadRequests: query address=", address, "signer.address=", signer.address, "contract target=", signer.address?.toLowerCase() === address?.toLowerCase());
+        console.log("[InboxList] calling getPendingRequests for address:", address, "offset:", offsetToUse, "pageSize:", PAGE_SIZE);
         const [ids, rawRequests]: [bigint[], any[]] = await Promise.all([
           signerContract.getPendingRequestIds(address, offsetToUse, PAGE_SIZE),
           signerContract.getPendingRequests(address, offsetToUse, PAGE_SIZE),
@@ -111,10 +124,12 @@ export default function InboxList({ refreshKey }: InboxListProps) {
           ids: ids.map((id) => id.toString()),
           rawRequests,
         });
+        console.log("[InboxList] raw result length: ids=", ids.length, "rawRequests=", rawRequests.length);
 
-        const pending: ChatRequest[] = ids.map((id, i) =>
-          mapRequest(id, rawRequests[i]),
-        );
+        const pending: ChatRequest[] = ids
+          .map((id, i) => mapRequest(id, rawRequests[i]))
+          .filter((r) => r.sender.toLowerCase() !== address.toLowerCase());
+        console.log("[InboxList] mapped pending count (after self-filter):", pending.length, "first item:", pending[0] ?? "none");
 
         setRequests((prev) => (reset ? pending : [...prev, ...pending]));
         setHasMore(ids.length === PAGE_SIZE);
@@ -152,7 +167,8 @@ export default function InboxList({ refreshKey }: InboxListProps) {
         // signer-connected contract is required (view calls do not prompt).
         const contract = getMailboxContractWrite(signer);
 
-        console.log("[InboxList] calling getRequestsByReceiver for address:", address);
+        console.log("[InboxList] loadReceiverRequests: query address=", address, "signer.address=", signer.address, "contract target=", signer.address?.toLowerCase() === address?.toLowerCase());
+        console.log("[InboxList] calling getRequestsByReceiver for address:", address, "offset:", offsetToUse, "pageSize:", PAGE_SIZE);
         const [ids, rawRequests]: [bigint[], any[]] =
           await contract.getRequestsByReceiver(address, offsetToUse, PAGE_SIZE);
         console.log("[InboxList] getRequestsByReceiver raw result:", {
@@ -161,10 +177,12 @@ export default function InboxList({ refreshKey }: InboxListProps) {
           ids: ids.map((id) => id.toString()),
           rawRequests,
         });
+        console.log("[InboxList] raw result length: ids=", ids.length, "rawRequests=", rawRequests.length);
 
-        const mapped: ChatRequest[] = ids.map((id, i) =>
-          mapRequest(id, rawRequests[i]),
-        );
+        const mapped: ChatRequest[] = ids
+          .map((id, i) => mapRequest(id, rawRequests[i]))
+          .filter((r) => r.sender.toLowerCase() !== address.toLowerCase());
+        console.log("[InboxList] mapped receiver count (after self-filter):", mapped.length, "accepted:", mapped.filter((r) => r.accepted).length, "first item:", mapped[0] ?? "none");
 
         setReceiverRequests((prev) =>
           reset ? mapped : [...prev, ...mapped],
@@ -185,7 +203,10 @@ export default function InboxList({ refreshKey }: InboxListProps) {
 
   // Load both lists on mount, on account change, and when a new request is sent.
   useEffect(() => {
+    const signerAddress = signer?.address ?? null;
+    console.log("[InboxList] effect triggered: address=", address, "signer.address=", signerAddress, "signer present=", signer ? "yes" : "no", "match=", address?.toLowerCase() === signerAddress?.toLowerCase());
     if (!address || !signer) {
+      console.log("[InboxList] no address/signer; clearing lists");
       setRequests([]);
       setReceiverRequests([]);
       setOffset(0);
@@ -291,6 +312,45 @@ export default function InboxList({ refreshKey }: InboxListProps) {
     [signer, loadRequests, loadReceiverRequests],
   );
 
+  const handleCheckML = useCallback(
+    async (request: ChatRequest) => {
+      const proxyUrl = process.env.NEXT_PUBLIC_FCC_PROXY_URL?.trim();
+      if (!proxyUrl) {
+        setMlErrors((prev) => ({
+          ...prev,
+          [request.requestId]: "FCC proxy URL is not configured.",
+        }));
+        return;
+      }
+
+      setMlLoadingIds((prev) => new Set(prev).add(request.requestId));
+      setMlErrors((prev) => {
+        const next = { ...prev };
+        delete next[request.requestId];
+        return next;
+      });
+
+      try {
+        const score = await runMLBehaviorCheck(proxyUrl, request.sender);
+        setMlScores((prev) => ({ ...prev, [request.requestId]: score }));
+      } catch (err: any) {
+        console.error("[InboxList] ML check failed:", err);
+        setMlErrors((prev) => ({
+          ...prev,
+          [request.requestId]:
+            err.message ?? "Behavior check failed",
+        }));
+      } finally {
+        setMlLoadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(request.requestId);
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   function openEditNickname(sender: string) {
     setEditing(sender);
     setEditValue(nicknames[sender.toLowerCase()] ?? "");
@@ -358,6 +418,8 @@ export default function InboxList({ refreshKey }: InboxListProps) {
 
   const displayRequests =
     mode === "pending" ? requests : mode === "chats" ? chats : history;
+
+  console.log("[InboxList] render summary: mode=", mode, "pending count=", requests.length, "chats count=", chats.length, "history count=", history.length, "receiverRequests total=", receiverRequests.length, "display count=", displayRequests.length, "loading=", isLoading);
 
   const emptyCopy: Record<Mode, { icon: string; title: string; body: string }> = {
     pending: {
@@ -583,21 +645,64 @@ export default function InboxList({ refreshKey }: InboxListProps) {
                 </div>
 
                 {mode === "pending" ? (
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => handleAccept(req.requestId)}
-                      disabled={actionId === req.requestId}
-                      className="flex-1 rounded-2xl bg-[#DFD0B8] px-5 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {actionId === req.requestId ? "Working..." : "Accept"}
-                    </button>
-                    <button
-                      onClick={() => handleReject(req.requestId)}
-                      disabled={actionId === req.requestId}
-                      className="flex-1 rounded-2xl bg-[#948979] px-5 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#948979]/80 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {actionId === req.requestId ? "Working..." : "Reject"}
-                    </button>
+                  <div className="flex flex-col gap-3">
+                    {mlScores[req.requestId] && (
+                      <div className="group relative flex items-center gap-2 rounded-xl border border-[#DFD0B8]/20 bg-[#222831] px-4 py-2">
+                        <span className="text-sm">🛡️</span>
+                        <span className="text-sm font-bold text-[#DFD0B8]">
+                          {formatMLBadge(mlScores[req.requestId])}
+                        </span>
+                        <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-64 -translate-x-1/2 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] p-3 text-xs text-[#DFD0B8] opacity-0 shadow-xl shadow-black/30 transition-opacity group-hover:opacity-100">
+                          <p className="mb-2 font-bold text-[#DFD0B8]">
+                            Model: {mlScores[req.requestId]!.modelVersion}
+                          </p>
+                          <ul className="list-disc space-y-1 pl-4 text-[#948979]">
+                            {mlScores[req.requestId]!.explanation.map((factor, i) => (
+                              <li key={i}>{factor}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                    {mlErrors[req.requestId] && !mlScores[req.requestId] && (
+                      <p className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-300">
+                        {mlErrors[req.requestId]}
+                      </p>
+                    )}
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => handleAccept(req.requestId)}
+                        disabled={actionId === req.requestId}
+                        className="flex-1 rounded-2xl bg-[#DFD0B8] px-5 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {actionId === req.requestId ? "Working..." : "Accept"}
+                      </button>
+                      <button
+                        onClick={() => handleReject(req.requestId)}
+                        disabled={actionId === req.requestId}
+                        className="flex-1 rounded-2xl bg-[#948979] px-5 py-3 text-sm font-bold text-[#222831] shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#948979]/80 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {actionId === req.requestId ? "Working..." : "Reject"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCheckML(req)}
+                        disabled={
+                          actionId === req.requestId ||
+                          mlLoadingIds.has(req.requestId)
+                        }
+                        className="rounded-2xl border border-[#DFD0B8]/20 bg-[#222831] px-5 py-3 text-sm font-bold text-[#DFD0B8] shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#DFD0B8]/40 hover:bg-[#31363F] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {mlLoadingIds.has(req.requestId) ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#DFD0B8]/30 border-t-[#DFD0B8]" />
+                            Checking...
+                          </span>
+                        ) : (
+                          "CHECK"
+                        )}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   // History: expired requests are read-only.

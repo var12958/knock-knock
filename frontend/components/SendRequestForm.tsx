@@ -83,6 +83,26 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
     };
   }, []);
 
+  // Reset the form whenever the connected wallet account changes so the user
+  // does not accidentally re-send a message intended for another account.
+  // IMPORTANT: do NOT reset after a successful send; the success message must
+  // stay visible until the user explicitly navigates away.
+  useEffect(() => {
+    if (isSuccess) {
+      console.log("[SendRequestForm] address changed but isSuccess=true; skipping form reset");
+      return;
+    }
+    setReceiversString("");
+    setPreview("");
+    setIsSuccess(false);
+    setIsSending(false);
+    setTxHash(null);
+    setError(null);
+    setStatus({ stage: "idle" });
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, [address, isSuccess]);
+
   function setStatusIfMounted(next: SendStatus) {
     if (isMountedRef.current) setStatus(next);
   }
@@ -100,7 +120,8 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
   }
 
   function setIsSuccessIfMounted(next: boolean) {
-    if (isMountedRef.current) setIsSuccess(next);
+    console.log("[SendRequestForm] setIsSuccessIfMounted called with:", next);
+    setIsSuccess(next);
   }
 
   const isConnected = Boolean(signer && address);
@@ -385,12 +406,18 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
 
         console.log("[SendRequestForm] waiting for sendRequestWithProof to mine...");
         const submitReceipt = await submitTx.wait();
+        console.log("[SendRequestForm] tx.wait() resolved for", submitTx.hash, "receipt:", submitReceipt);
         if (!submitReceipt || submitReceipt.status !== 1) {
+          console.error("[SendRequestForm] receipt status failed:", submitReceipt);
           throw new Error("Mailbox transaction failed on-chain.");
         }
         console.log(
-          "[SendRequestForm] sendRequestWithProof MINED:",
-          submitReceipt.hash
+          "[SendRequestForm] sendRequestWithProof MINED successfully. receiptHash=",
+          submitReceipt.hash,
+          "block=",
+          submitReceipt.blockNumber,
+          "status=",
+          submitReceipt.status
         );
 
         // Extract the on-chain requestId from the `RequestSent` event so we can
@@ -437,8 +464,10 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       // As soon as every on-chain sendRequestWithProof has mined, flip the
       // success guard. This is checked first in the render so no later error
       // or status update can hide the success message.
+      console.log("[SendRequestForm] all receivers mined; DISPATCHING setIsSuccess(true)");
       setIsSuccessIfMounted(true);
-      console.log("[SendRequestForm] isSuccess set to TRUE");
+      console.log("[SendRequestForm] setIsSuccess(true) DISPATCH completed");
+      console.log("[SendRequestForm] setIsSuccess(true) dispatched");
 
       // If more than one receiver was knocked, persist a group mapping so the
       // sidebar can render the multi-party chat as a single Group Chat card.
@@ -475,6 +504,7 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
 
       // Final bookkeeping: persist the last transaction hash and mark the
       // status done for any downstream progress UI.
+      console.log("[SendRequestForm] final bookkeeping: lastTxHash=", lastTxHash, "requestIds=", requestIds);
       try {
         setTxHashIfMounted(lastTxHash);
         setStatusIfMounted({ stage: "done", txHash: lastTxHash });
@@ -493,7 +523,11 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       }
     } catch (err: any) {
       console.error("[SendRequestForm] transaction failed:", err);
+      console.error("[SendRequestForm] transaction failed code:", err?.code);
+      console.error("[SendRequestForm] transaction failed reason:", err?.reason);
+      console.error("[SendRequestForm] transaction failed data:", err?.data);
       setErrorIfMounted(err.reason ?? err.message ?? "Transaction failed");
+      console.log("[SendRequestForm] error state set; isSuccess remains", isSuccess);
     } finally {
       setIsSendingIfMounted(false);
       abortControllerRef.current = null;
@@ -503,13 +537,27 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
 
   // Absolute first branch of the render: once success is set, nothing else
   // in this component is allowed to override it.
+  console.log("[SendRequestForm] RETURN TOP: isSuccess=", isSuccess, "isSending=", isSending, "error=", error, "status=", status);
   if (isSuccess) {
     return (
-      <div className="bg-[#393E46] text-[#DFD0B8] p-6 rounded-xl border border-[#DFD0B8]/10">
-        ✅ Message sent successfully!{" "}
-        <Link href="/inbox" className="underline">
-          Go to Inbox
-        </Link>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="mx-auto max-w-md rounded-2xl border border-[#DFD0B8]/10 bg-[#393E46] p-8 text-center shadow-2xl shadow-black/25">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-3xl">
+            ✅
+          </div>
+          <h3 className="mb-2 text-xl font-bold tracking-tight text-[#DFD0B8]">
+            Message sent successfully!
+          </h3>
+          <p className="mb-6 text-sm text-[#948979]">
+            Your knock is on-chain and ready for the receiver.
+          </p>
+          <Link
+            href="/"
+            className="inline-block rounded-xl bg-[#DFD0B8] px-6 py-3 text-sm font-bold text-[#222831] transition-colors hover:bg-[#DFD0B8]/90"
+          >
+            Go to Inbox
+          </Link>
+        </div>
       </div>
     );
   }
@@ -629,6 +677,7 @@ async function fetchProof(
   for (let attempt = 0; attempt < PROOF_POLL_MAX_ATTEMPTS; attempt++) {
     throwIfAborted();
     console.log(`[SendRequestForm] polling proxy attempt ${attempt + 1}/${PROOF_POLL_MAX_ATTEMPTS}`);
+    console.log("[SendRequestForm] fetch proof POST to", proxyUrl, "payload:", payload);
     const response = await fetch(proxyUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -636,13 +685,19 @@ async function fetchProof(
       signal,
     });
 
+    console.log("[SendRequestForm] proxy HTTP status:", response.status, response.statusText);
+
     if (!response.ok) {
-      throw new Error(`FCC proxy returned HTTP ${response.status}`);
+      const errorText = await response.text().catch(() => "(could not read body)");
+      console.error("[SendRequestForm] proxy HTTP error body:", errorText);
+      throw new Error(`FCC proxy returned HTTP ${response.status}: ${errorText}`);
     }
 
     const body = await response.json();
+    console.log("[SendRequestForm] proxy response body:", JSON.stringify(body, null, 2));
 
     if (body.status === 0) {
+      console.warn("[SendRequestForm] proxy returned status 0 (proof not ready or TEE error):", body.error ?? "no error message");
       if (attempt === PROOF_POLL_MAX_ATTEMPTS - 1) {
         throw new Error(body.error ?? "Timed out waiting for the TEE signature.");
       }

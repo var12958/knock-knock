@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getUserProfile } from "@/lib/firebaseProfile";
@@ -15,12 +16,19 @@ function shortenAddress(address: string): string {
 export default function Web3Header() {
   const { address, chainId, isConnecting, error, connect, disconnect } = useWeb3();
   const { user } = useFirebaseAuth();
+  const pathname = usePathname() ?? "/";
+  const searchParams = useSearchParams();
   const [username, setUsername] = useState<string | null>(null);
   const [usernameLoading, setUsernameLoading] = useState(false);
   const isCorrectNetwork = chainId === COSTON2_CHAIN_ID;
 
+  const isHomeOrTab = pathname === "/" || pathname === "/send";
+  const activeTab = searchParams.get("tab") ?? "inbox";
+
   useEffect(() => {
+    console.log("[Web3Header] auth effect: user?.uid=", user?.uid);
     if (!user?.uid) {
+      console.log("[Web3Header] no uid, clearing username");
       setUsername(null);
       setUsernameLoading(false);
       return;
@@ -31,8 +39,11 @@ export default function Web3Header() {
 
     getUserProfile(user.uid)
       .then((profile) => {
+        console.log("[Web3Header] getUserProfile resolved for uid=", user.uid, "profile=", profile);
         if (!cancelled) {
-          setUsername(profile?.username ?? null);
+          const resolvedName = profile?.displayName || profile?.username || null;
+          console.log("[Web3Header] resolved displayName/username to:", resolvedName);
+          setUsername(resolvedName);
         }
       })
       .catch((err) => {
@@ -55,6 +66,8 @@ export default function Web3Header() {
     : address
       ? shortenAddress(address)
       : "";
+
+  console.log("[Web3Header] render: username=", username, "hasUsername=", hasUsername, "displayName=", displayName, "address=", address, "usernameLoading=", usernameLoading);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-[#DFD0B8]/10 bg-[#222831]/80 px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:px-6 lg:px-8">
@@ -85,6 +98,37 @@ export default function Web3Header() {
         </Link>
 
         <div className="flex items-center gap-3">
+          {address && isHomeOrTab && (
+            <nav className="hidden items-center gap-1 rounded-xl border border-[#DFD0B8]/10 bg-[#222831]/60 p-1 md:flex">
+              {[
+                { key: "inbox", label: "Inbox" },
+                { key: "chats", label: "Chats" },
+                { key: "history", label: "History" },
+              ].map((tab) => (
+                <Link
+                  key={tab.key}
+                  href={`/?tab=${tab.key}`}
+                  className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors duration-200 ${
+                    activeTab === tab.key
+                      ? "bg-[#DFD0B8] text-[#222831]"
+                      : "text-[#948979] hover:text-[#DFD0B8]"
+                  }`}
+                >
+                  {tab.label}
+                </Link>
+              ))}
+            </nav>
+          )}
+
+          {address && isHomeOrTab && (
+            <Link
+              href="/send"
+              className="rounded-xl bg-[#DFD0B8] px-4 py-2 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
+            >
+              + New Chat
+            </Link>
+          )}
+
           {address ? (
             <div className="flex items-center gap-3 rounded-2xl border border-[#DFD0B8]/10 bg-[#393E46] px-4 py-2.5 shadow-lg shadow-black/20 transition-all duration-300 hover:border-[#DFD0B8]/20">
               <div className="hidden flex-col items-end sm:flex">

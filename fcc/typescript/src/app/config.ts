@@ -82,6 +82,13 @@ export const ML_CODE_FETCH_CONCURRENCY = parsePositiveInteger(
   "10",
 );
 
+/** When true, the ML behavior analysis falls back to deterministic mock
+ *  features if the Flare RPC fails. Enabled by default for the hackathon demo
+ *  so a timeout does not block the UI; set to "false" in production so the
+ *  TEE fails closed and never signs a synthetic behavioral attestation. */
+export const ML_MOCK_ON_FAILURE =
+  (process.env.ML_MOCK_ON_FAILURE ?? "true").toLowerCase() === "true";
+
 /** Weight of the Random-Forest component in the blended bot score. */
 export const ML_RF_BLEND_WEIGHT = 0.7;
 

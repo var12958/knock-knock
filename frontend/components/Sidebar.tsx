@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
@@ -13,6 +13,11 @@ import {
   addDeletedChat,
   subscribeDeletedChats,
 } from "@/lib/firebaseDeletedChats";
+import {
+  type MLBehaviorScore,
+  runMLBehaviorCheck,
+} from "@/lib/runMLBehaviorCheck";
+import SidebarPendingCard from "./SidebarPendingCard";
 
 /**
  * A Group Knock mapping persisted by SendRequestForm after a multi-receiver
@@ -91,6 +96,13 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
   // nickname map keyed by lowercase sender address.
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
 
+  // TEE ML behavior check results keyed by request id.
+  const [mlScores, setMlScores] = useState<Record<string, MLBehaviorScore | null>>({});
+  const [mlLoadingIds, setMlLoadingIds] = useState<Set<string>>(new Set());
+  const [mlErrors, setMlErrors] = useState<Record<string, string>>({});
+  const mlAbortControllersRef = useRef<Record<string, AbortController>>({});
+  const mlCheckTokensRef = useRef<Record<string, number>>({});
+
   // Request ids the user has hidden from their Chats list (persisted in
   // Firebase at deletedChats/{uid}/{requestId}). Accepted chats whose id is in
   // this set are filtered out of the rendered list. Kept as a Set so membership
@@ -140,6 +152,9 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
           // which never matches `target`, so they are naturally excluded.
           if (!req || req.receiver?.toLowerCase() !== target) continue;
 
+          const sender = req.sender?.toLowerCase();
+          if (sender === target) continue;
+
           const item = mapRequest(BigInt(ids[k]), req);
           if (item.accepted) {
             accepted.push(item);
@@ -172,6 +187,19 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     }
     void loadRequests();
   }, [address, refreshKey, loadRequests]);
+
+  // Abort in-flight ML checks and clear per-account results when the wallet
+  // changes so a different user never sees another account's analysis.
+  useEffect(() => {
+    Object.values(mlAbortControllersRef.current).forEach((controller) => {
+      controller.abort();
+    });
+    mlAbortControllersRef.current = {};
+    mlCheckTokensRef.current = {};
+    setMlScores({});
+    setMlLoadingIds(new Set());
+    setMlErrors({});
+  }, [address]);
 
   // Subscribe to the user's entire private nickname address book in real time.
   // The write path is contacts/${uid}/${senderAddress} (see contactsRef); this
@@ -294,6 +322,65 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
       }
     },
     [signer, loadRequests],
+  );
+
+  const handleCheckML = useCallback(
+    async (request: ChatRequest) => {
+      const proxyUrl = process.env.NEXT_PUBLIC_FCC_PROXY_URL?.trim();
+      if (!proxyUrl) {
+        setMlErrors((prev) => ({
+          ...prev,
+          [request.requestId]: "FCC proxy URL is not configured.",
+        }));
+        return;
+      }
+
+      // Cancel any previous in-flight check for this request so rapid re-clicks
+      // do not race and stale results cannot update state.
+      const requestKey = request.requestId;
+      const token = (mlCheckTokensRef.current[requestKey] ?? 0) + 1;
+      mlCheckTokensRef.current[requestKey] = token;
+      mlAbortControllersRef.current[requestKey]?.abort();
+      const abortController = new AbortController();
+      mlAbortControllersRef.current[requestKey] = abortController;
+
+      setMlLoadingIds((prev) => new Set(prev).add(requestKey));
+      setMlErrors((prev) => {
+        const next = { ...prev };
+        delete next[requestKey];
+        return next;
+      });
+
+      try {
+        const expectedSigner =
+          process.env.NEXT_PUBLIC_TEE_SIGNER_ADDRESS?.trim() || undefined;
+        const score = await runMLBehaviorCheck(
+          proxyUrl,
+          request.sender,
+          expectedSigner,
+          abortController.signal,
+        );
+        if (mlCheckTokensRef.current[requestKey] !== token) return;
+        setMlScores((prev) => ({ ...prev, [requestKey]: score }));
+      } catch (err: any) {
+        if (err.name === "AbortError") return;
+        if (mlCheckTokensRef.current[requestKey] !== token) return;
+        setMlErrors((prev) => ({
+          ...prev,
+          [requestKey]: err.message ?? "Behavior check failed",
+        }));
+      } finally {
+        if (mlCheckTokensRef.current[requestKey] === token) {
+          delete mlAbortControllersRef.current[requestKey];
+          setMlLoadingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(requestKey);
+            return next;
+          });
+        }
+      }
+    },
+    [],
   );
 
   function openEditNickname(sender: string) {
@@ -550,55 +637,22 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
             {pendingRequests.length > 0 && (
               <>
                 <SectionLabel className="mt-4">Pending</SectionLabel>
-                {pendingRequests.map((req) => {
-                  const preview = decodePreview(req.encryptedPreviewMessage);
-                  return (
-                    <div
-                      key={`pending-${req.requestId}`}
-                      className="rounded-xl border border-[#DFD0B8]/10 bg-[#393E46] p-3"
-                    >
-                      {/* Preview message — rendered prominently so the user can
-                          decide whether to accept or reject the knock. */}
-                      <div className="mb-2 flex items-start gap-3 rounded-lg border border-[#948979]/20 bg-[#222831] p-3">
-                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-base">
-                          ❓
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#948979]">
-                            Preview
-                          </p>
-                          <p className="mt-0.5 break-words text-sm font-medium text-[#DFD0B8]">
-                            {preview || "No preview included with this knock"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <p className="mb-2 truncate text-xs text-[#948979]">
-                        {req.isRevealed
-                          ? `Sender: ${shortenAddress(req.sender)}`
-                          : "Sender address is hidden to protect privacy."}
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleAccept(req.requestId)}
-                          disabled={actionId === req.requestId}
-                          className="flex-1 rounded-lg bg-[#DFD0B8] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#DFD0B8]/90 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {actionId === req.requestId ? "..." : "Accept"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReject(req.requestId)}
-                          disabled={actionId === req.requestId}
-                          className="flex-1 rounded-lg bg-[#948979] px-3 py-1.5 text-xs font-bold text-[#222831] transition-colors hover:bg-[#948979]/80 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {actionId === req.requestId ? "..." : "Reject"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                {pendingRequests.map((req) => (
+                  <SidebarPendingCard
+                    key={`pending-${req.requestId}`}
+                    requestId={req.requestId}
+                    sender={req.sender}
+                    encryptedPreviewMessage={req.encryptedPreviewMessage}
+                    isRevealed={req.isRevealed}
+                    actionId={actionId}
+                    mlScore={mlScores[req.requestId]}
+                    mlLoading={mlLoadingIds.has(req.requestId)}
+                    mlError={mlErrors[req.requestId]}
+                    onAccept={() => void handleAccept(req.requestId)}
+                    onReject={() => void handleReject(req.requestId)}
+                    onCheck={() => void handleCheckML(req)}
+                  />
+                ))}
               </>
             )}
 

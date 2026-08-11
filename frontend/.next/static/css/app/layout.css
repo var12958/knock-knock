@@ -624,6 +624,9 @@ video {
 .top-full {
   top: 100%;
 }
+.top-1\/2 {
+  top: 50%;
+}
 .isolate {
   isolation: isolate;
 }
@@ -790,6 +793,9 @@ video {
 .min-h-screen {
   min-height: 100vh;
 }
+.min-h-\[60vh\] {
+  min-height: 60vh;
+}
 .w-1\.5 {
   width: 0.375rem;
 }
@@ -825,6 +831,9 @@ video {
 }
 .w-5 {
   width: 1.25rem;
+}
+.w-56 {
+  width: 14rem;
 }
 .w-64 {
   width: 16rem;
@@ -896,6 +905,10 @@ video {
 }
 .translate-x-3\.5 {
   --tw-translate-x: 0.875rem;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+.-translate-y-1\/2 {
+  --tw-translate-y: -50%;
   transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
 }
 .transform {
@@ -1191,6 +1204,9 @@ video {
 .bg-sky-500\/15 {
   background-color: rgb(14 165 233 / 0.15);
 }
+.bg-\[\#222831\]\/60 {
+  background-color: rgb(34 40 49 / 0.6);
+}
 .bg-gradient-to-b {
   background-image: linear-gradient(to bottom, var(--tw-gradient-stops));
 }
@@ -1319,6 +1335,14 @@ video {
 .py-8 {
   padding-top: 2rem;
   padding-bottom: 2rem;
+}
+.py-20 {
+  padding-top: 5rem;
+  padding-bottom: 5rem;
+}
+.py-6 {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
 }
 .pl-4 {
   padding-left: 1rem;
@@ -1552,6 +1576,10 @@ video {
   --tw-shadow-color: rgb(0 0 0 / 0.4);
   --tw-shadow: var(--tw-shadow-colored);
 }
+.outline-none {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
 .ring {
   --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
   --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
@@ -1739,6 +1767,10 @@ video {
 
 .placeholder\:text-\[\#948979\]\/60::placeholder {
   color: rgb(148 137 121 / 0.6);
+}
+
+.focus-within\:border-\[\#DFD0B8\]\/50:focus-within {
+  border-color: rgb(223 208 184 / 0.5);
 }
 
 .hover\:-translate-y-0\.5:hover {
@@ -1953,6 +1985,10 @@ video {
   --tw-ring-color: rgb(223 208 184 / 0.4);
 }
 
+.group:focus-visible .group-focus-visible\:opacity-100 {
+  opacity: 1;
+}
+
 @media (min-width: 640px) {
 
   .sm\:inline {
@@ -2002,6 +2038,13 @@ video {
 
   .sm\:text-\[15px\] {
     font-size: 15px;
+  }
+}
+
+@media (min-width: 768px) {
+
+  .md\:flex {
+    display: flex;
   }
 }
 
