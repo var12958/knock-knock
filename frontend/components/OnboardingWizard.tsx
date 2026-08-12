@@ -414,7 +414,7 @@ export default function OnboardingWizard() {
       <StepIndicator current={step} />
 
       {/* key forces a fresh entrance animation on every step change */}
-      <div key={step} className="animate-step-in">
+      <div key={step} className="animate-step-in text-center">
         {step === "auth" && (
           <AuthStep
             mode={authMode}
@@ -820,7 +820,7 @@ function WalletStep({
           onClick={onConnect}
           className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-5 py-3.5 font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25"
         >
-          Connect MetaMask
+          Connect Wallet
         </button>
       )}
 

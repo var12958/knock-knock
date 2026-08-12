@@ -42,12 +42,12 @@ export default function Dashboard() {
   const groupId = parseGroupId(pathname);
   const isSend = pathname === "/send";
 
-  // Tabs are driven by a query param so the header can switch views without
-  // routing to non-existent pages.
+  // Dashboard view is driven by the `view` query param so the header tabs can
+  // route directly to the correct list (Pending / Chats / History).
   const activeTab: "inbox" | "chats" | "history" =
-    searchParams.get("tab") === "chats"
+    searchParams.get("view") === "chats"
       ? "chats"
-      : searchParams.get("tab") === "history"
+      : searchParams.get("view") === "history"
       ? "history"
       : "inbox";
   const isTabView = !chatId && !groupId && !isSend;

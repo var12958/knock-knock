@@ -565,13 +565,13 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
   return (
     <form
       onSubmit={handleSubmit}
-      className="mx-auto max-w-xl"
+      className="mx-auto max-w-xl text-center"
     >
       <h2 className="mb-8 text-3xl font-bold tracking-tight text-[#DFD0B8]">
         Send a Knock
       </h2>
 
-      <div className="mb-6">
+      <div className="mb-6 text-left">
         <label
           htmlFor="receivers"
           className="mb-2 block text-sm font-semibold text-[#DFD0B8]"
@@ -592,7 +592,7 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
         />
       </div>
 
-      <div className="mb-6">
+      <div className="mb-6 text-left">
         <label
           htmlFor="preview"
           className="mb-2 block text-sm font-semibold text-[#DFD0B8]"
@@ -614,7 +614,7 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
         </p>
       </div>
 
-      <div className="mb-8 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] px-5 py-4 text-sm">
+      <div className="mb-8 rounded-xl border border-[#DFD0B8]/10 bg-[#222831] px-5 py-4 text-left text-sm">
         <p className="font-bold text-[#DFD0B8]">Privacy-preserving verification</p>
         <p className="mt-1 text-[#948979]">
           Your wallet age and humanity are checked inside the Flare TEE. The
@@ -626,9 +626,16 @@ export default function SendRequestForm({ onMessageSent }: SendRequestFormProps)
       <button
         type="submit"
         disabled={!isConnected || isSending || isWrongNetwork || !MAILBOX_ADDRESS}
-        className="w-full rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-6 py-4 text-base font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:bg-[#948979] disabled:text-[#222831] disabled:opacity-60 disabled:shadow-none disabled:from-[#948979] disabled:to-[#948979]"
+        className="inline-flex w-full items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-b from-[#DFD0B8] to-[#c9b89a] px-6 py-4 text-base font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[#DFD0B8]/25 disabled:cursor-not-allowed disabled:bg-[#948979] disabled:text-[#222831] disabled:opacity-60 disabled:shadow-none disabled:from-[#948979] disabled:to-[#948979]"
       >
-        {isSending ? progressLabel(status) : "Send Knock"}
+        {isSending ? (
+          <>
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#222831]/30 border-t-[#222831]" />
+            <span className="min-w-0 break-words">{progressLabel(status)}</span>
+          </>
+        ) : (
+          "Send Knock"
+        )}
       </button>
 
       {!MAILBOX_ADDRESS && (

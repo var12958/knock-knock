@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { motion } from "framer-motion";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { onValue, ref } from "firebase/database";
@@ -104,11 +105,18 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
   const mlCheckTokensRef = useRef<Record<string, number>>({});
 
   // Request ids the user has hidden from their Chats list (persisted in
-  // Firebase at deletedChats/{uid}/{requestId}). Accepted chats whose id is in
-  // this set are filtered out of the rendered list. Kept as a Set so membership
-  // checks are O(1) and the real-time subscription can reconcile it directly.
+  // Firebase at deletedChats/{uid}/{requestId}). Accepted chats and History
+  // items whose id is in this set are filtered out of the rendered list so the
+  // two views stay consistent. Kept as a Set so membership checks are O(1) and
+  // the real-time subscription can reconcile it directly.
   const [deletedChats, setDeletedChats] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Mirror of deletedChats used inside async loaders without recreating callbacks.
+  const deletedChatsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    deletedChatsRef.current = deletedChats;
+  }, [deletedChats]);
 
   // Group Knock mappings for the current user (persisted at groups/{uid}).
   // Each entry groups the on-chain request ids created for a multi-receiver
@@ -132,9 +140,9 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
       const nextId = Number(await contract.nextRequestId()); // IDs exist for 1..nextId-1
       const target = address.toLowerCase();
 
-      const accepted: ChatRequest[] = [];
-      const pending: ChatRequest[] = [];
-      const history: ChatRequest[] = [];
+      const acceptedMap = new Map<string, ChatRequest>();
+      const pendingMap = new Map<string, ChatRequest>();
+      const historyMap = new Map<string, ChatRequest>();
 
       // Scan newest-first in parallel chunks to keep RPC calls bounded.
       for (let start = nextId - 1; start >= 1; start -= FETCH_CHUNK) {
@@ -156,15 +164,43 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
           if (sender === target) continue;
 
           const item = mapRequest(BigInt(ids[k]), req);
+          // Deduplicate by requestId within each category.
           if (item.accepted) {
-            accepted.push(item);
+            acceptedMap.set(item.requestId, item);
           } else if (Date.now() / 1000 <= item.expirationTime) {
-            pending.push(item);
+            pendingMap.set(item.requestId, item);
           } else {
-            history.push(item);
+            // History contains only unaccepted, expired requests. Rejected
+            // requests are cleaned up on-chain and never returned. Hidden
+            // (deleted) chats are dropped here and again at render time so the
+            // Firebase subscription remains authoritative.
+            if (!deletedChatsRef.current.has(item.requestId)) {
+              historyMap.set(item.requestId, item);
+            }
           }
         }
       }
+
+      // Newest first in each list so recent activity appears at the top.
+      const pending = Array.from(pendingMap.values()).sort(
+        (a, b) => b.expirationTime - a.expirationTime,
+      );
+      const history = Array.from(historyMap.values()).sort(
+        (a, b) => b.expirationTime - a.expirationTime,
+      );
+
+      // Accepted chats: one entry per unique sender, keep the newest requestId.
+      const acceptedBySender = new Map<string, ChatRequest>();
+      acceptedMap.forEach((req) => {
+        const sender = req.sender.toLowerCase();
+        const existing = acceptedBySender.get(sender);
+        if (!existing || BigInt(req.requestId) > BigInt(existing.requestId)) {
+          acceptedBySender.set(sender, req);
+        }
+      });
+      const accepted = Array.from(acceptedBySender.values()).sort(
+        (a, b) => b.expirationTime - a.expirationTime,
+      );
 
       setAcceptedChats(accepted);
       setPendingRequests(pending);
@@ -476,6 +512,12 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
     (req) => !deletedChats.has(req.requestId),
   );
 
+  // History items the user has NOT hidden. The same deletedChats set drives
+  // both the Chats and History sections so hiding a chat removes it everywhere.
+  const visibleHistoryRequests = historyRequests.filter(
+    (req) => !deletedChats.has(req.requestId),
+  );
+
   return (
     <aside className="flex w-80 flex-col border-r border-[#DFD0B8]/10 bg-[#222831]">
       <header className="flex items-center justify-between gap-2 border-b border-[#DFD0B8]/10 px-4 py-4">
@@ -498,7 +540,7 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-4">
         {loading && acceptedChats.length === 0 && pendingRequests.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <span className="h-7 w-7 animate-spin rounded-full border-2 border-[#DFD0B8]/30 border-t-[#DFD0B8]" />
@@ -523,7 +565,7 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
                       key={`group-${g.groupId}`}
                       type="button"
                       onClick={() => router.push(`/chat/group/${g.groupId}`)}
-                      className={`flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-200 ${
+                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-200 ${
                         isActive ? "bg-[#393E46]" : "hover:bg-[#393E46]/60"
                       }`}
                     >
@@ -549,7 +591,11 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
               Chats
             </SectionLabel>
             {visibleAcceptedChats.length === 0 ? (
-              <EmptyHint>No conversations yet.</EmptyHint>
+              <SidebarEmpty
+                icon="💬"
+                title="No conversations yet"
+                body="Accept a knock to start chatting."
+              />
             ) : (
               visibleAcceptedChats.map((req) => {
                 const nickname = nicknames[req.sender.toLowerCase()];
@@ -559,7 +605,7 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
                 return (
                   <div
                     key={`chat-${req.requestId}`}
-                    className={`group flex items-center gap-3 rounded-xl px-2 py-2 transition-colors duration-200 ${
+                    className={`group flex items-center gap-3 rounded-xl px-3 py-3 transition-colors duration-200 ${
                       isActive
                         ? "bg-[#393E46]"
                         : "hover:bg-[#393E46]/60"
@@ -657,15 +703,15 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
             )}
 
             {/* Section 3: History */}
-            {historyRequests.length > 0 && (
+            {visibleHistoryRequests.length > 0 && (
               <>
                 <SectionLabel className="mt-4">History</SectionLabel>
-                {historyRequests.map((req) => (
+                {visibleHistoryRequests.map((req) => (
                   <button
                     key={`history-${req.requestId}`}
                     type="button"
                     onClick={() => router.push(`/chat/${req.requestId}`)}
-                    className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors duration-200 hover:bg-[#393E46]/40"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-200 hover:bg-[#393E46]/40"
                   >
                     <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[#393E46] text-sm">
                       📜
@@ -683,13 +729,15 @@ export default function Sidebar({ refreshKey }: SidebarProps) {
               </>
             )}
 
-            {acceptedChats.length === 0 &&
+            {visibleAcceptedChats.length === 0 &&
               pendingRequests.length === 0 &&
-              historyRequests.length === 0 &&
+              visibleHistoryRequests.length === 0 &&
               !error && (
-                <EmptyHint>
-                  No knocks yet. Tap + to send your first knock.
-                </EmptyHint>
+                <SidebarEmpty
+                  icon="🚪"
+                  title="Your door is quiet"
+                  body="Tap + to send your first private knock."
+                />
               )}
           </div>
         )}
@@ -779,13 +827,34 @@ function SectionLabel({
 }) {
   return (
     <p
-      className={`px-2 text-[10px] font-bold uppercase tracking-wider text-[#948979] ${className}`}
+      className={`px-3 text-[10px] font-bold uppercase tracking-wider text-[#948979] ${className}`}
     >
       {children}
     </p>
   );
 }
 
-function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <p className="px-2 py-2 text-xs text-[#948979]">{children}</p>;
+function SidebarEmpty({
+  icon,
+  title,
+  body,
+}: {
+  icon: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className="flex flex-col items-center rounded-2xl border border-[#DFD0B8]/10 bg-[#222831]/60 px-4 py-6 text-center"
+    >
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#393E46] text-2xl ring-1 ring-[#DFD0B8]/10">
+        {icon}
+      </div>
+      <p className="mb-1 text-sm font-bold text-[#DFD0B8]">{title}</p>
+      <p className="text-xs leading-relaxed text-[#948979]">{body}</p>
+    </motion.div>
+  );
 }

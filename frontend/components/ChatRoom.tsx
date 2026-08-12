@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { ref, push, set, remove, onValue } from "firebase/database";
 import { getAuth } from "firebase/auth";
 import { realtimeDb } from "@/lib/firebase";
@@ -43,6 +44,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(true);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [isTipping, setIsTipping] = useState(false);
@@ -68,7 +70,11 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
     setLoading(true);
     setError(null);
     setRequest(null);
-    setMessages([]);
+    // Do not wipe messages here; keep the previous list covered by the loading
+    // overlay until the Firebase listener for the new chat attaches and clears
+    // them safely behind messagesLoading. This prevents "No conversation yet"
+    // flashes while the listener is still initializing.
+    setMessagesLoading(true);
 
     async function loadRequest() {
       try {
@@ -114,7 +120,15 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       return;
     }
 
-    setError(null);
+    // Do NOT clear messages here: clearing can erase the chat UI while the
+    // Firebase listener is still fetching for the new request. The listener
+    // effect below will populate (or re-populate) the messages array safely.
+    if (
+      error === "You are not a participant in this chat." ||
+      error === "This chat request has not been accepted yet."
+    ) {
+      setError(null);
+    }
   }, [request, address]);
 
   // Subscribe to Firebase messages in real time.
@@ -141,10 +155,20 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
     console.log(`[ChatRoom] Subscribing to read path: chats/${requestId}/messages`);
     console.log("[ChatRoom] Firebase Auth currentUser (read):", getAuth(realtimeDb.app).currentUser);
 
+    // Start fresh for this chat so stale messages from a previous chat never
+    // render under the new header. The loading state hides the list until the
+    // first Firebase snapshot arrives.
+    setMessages([]);
+    setMessagesLoading(true);
+
+    // Tracks whether this subscription has received at least one snapshot.
+    // Used to ignore transient null/empty snapshots that Firebase can emit
+    // during reconnects or re-subscriptions after already-populated chats.
+    let hasReceivedSnapshot = false;
+
     // Arm a 30s self-destruct countdown for one incoming burn message.
     const armBurnTimer = (msgId: string) => {
-      const burnTimers = burnTimersRef.current;
-      if (burnTimers[msgId]) return; // already armed — never double-arm
+      if (burnTimersRef.current[msgId]) return; // already armed — never double-arm
 
       const timer = setTimeout(() => {
         // 1) Delete the message from Firebase.
@@ -155,20 +179,23 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
         );
         // 2) Remove it from local React state.
         setMessages((prev) => prev.filter((m) => m.id !== msgId));
-        // 3) Drop the spent timer entry.
-        delete burnTimersRef.current[msgId];
+        // 3) Drop the spent timer entry without mutating the ref object.
+        burnTimersRef.current = Object.fromEntries(
+          Object.entries(burnTimersRef.current).filter(([id]) => id !== msgId),
+        );
       }, BURN_AFTER_MS);
 
-      burnTimers[msgId] = timer;
+      burnTimersRef.current = { ...burnTimersRef.current, [msgId]: timer };
       console.log(`[ChatRoom] armed burn timer for ${msgId} (${BURN_AFTER_MS}ms)`);
     };
 
     const clearBurnTimer = (msgId: string) => {
-      const burnTimers = burnTimersRef.current;
-      const timer = burnTimers[msgId];
+      const timer = burnTimersRef.current[msgId];
       if (timer) {
         clearTimeout(timer);
-        delete burnTimers[msgId];
+        burnTimersRef.current = Object.fromEntries(
+          Object.entries(burnTimersRef.current).filter(([id]) => id !== msgId),
+        );
       }
     };
 
@@ -176,10 +203,26 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       messagesRef,
       (snapshot) => {
         const data = snapshot.val();
+        console.log(
+          `[ChatRoom] snapshot received from chats/${requestId}/messages.`,
+          "exists=",
+          snapshot.exists(),
+          "rawValue=",
+          data,
+        );
         if (!data) {
-          setMessages([]);
+          // Only clear messages on the first snapshot for this subscription.
+          // Later null events can be transient reconnects; wiping state here
+          // would flash "No conversation yet" while the chat is still open.
+          if (!hasReceivedSnapshot) {
+            setMessages([]);
+          }
+          hasReceivedSnapshot = true;
+          setMessagesLoading(false);
           return;
         }
+
+        hasReceivedSnapshot = true;
 
         const loaded: ChatMessage[] = [];
         const presentIds = new Set<string>();
@@ -211,6 +254,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
 
         loaded.sort((a, b) => a.timestamp - b.timestamp);
         setMessages(loaded);
+        setMessagesLoading(false);
 
         // Arm self-destruct timers for incoming burn messages.
         // Only messages from the other participant count down (sender !== me).
@@ -229,6 +273,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       (err: any) => {
         console.error("[ChatRoom] Firebase read failed:", err);
         setError(err.message ?? "Failed to load messages");
+        setMessagesLoading(false);
       },
     );
 
@@ -238,7 +283,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
       Object.values(burnTimersRef.current).forEach((timer) => clearTimeout(timer));
       burnTimersRef.current = {};
     };
-  }, [request, requestId, address]);
+  }, [requestId, request?.sender, request?.receiver, request?.accepted, address]);
 
   // Auto-scroll to the latest message.
   useEffect(() => {
@@ -456,7 +501,14 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-            {messages.length === 0 ? (
+            {messagesLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="flex flex-col items-center gap-3 text-[#948979]">
+                  <span className="h-8 w-8 animate-spin rounded-full border-2 border-[#DFD0B8]/30 border-t-[#DFD0B8]" />
+                  <span className="text-sm">Loading messages... 🚪</span>
+                </div>
+              </div>
+            ) : messages.length === 0 ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#222831] text-3xl ring-1 ring-[#DFD0B8]/10">
@@ -472,9 +524,16 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                 {messages.map((msg) => {
                   if (msg.isTip) {
                     return (
-                      <li
+                      <motion.li
                         key={msg.id}
-                        className="animate-message-in flex justify-center"
+                        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 340,
+                          damping: 26,
+                        }}
+                        className="flex justify-center"
                       >
                         <div className="flex max-w-[90%] items-center gap-2 rounded-2xl bg-[#DFD0B8] px-5 py-2.5 text-xs font-bold text-[#222831] shadow-md">
                           <span className="text-base leading-none">💸</span>
@@ -486,14 +545,21 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                             })}
                           </span>
                         </div>
-                      </li>
+                      </motion.li>
                     );
                   }
 
                   return (
-                    <li
+                    <motion.li
                       key={msg.id}
-                      className={`animate-message-in flex max-w-[85%] flex-col ${
+                      initial={{ opacity: 0, y: 20, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 340,
+                        damping: 26,
+                      }}
+                      className={`flex max-w-[85%] flex-col ${
                         msg.isMine ? "ml-auto items-end" : "items-start"
                       }`}
                     >
@@ -534,7 +600,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
                           minute: "2-digit",
                         })}
                       </span>
-                    </li>
+                    </motion.li>
                   );
                 })}
                 <div ref={messagesEndRef} />
@@ -547,7 +613,7 @@ export default function ChatRoom({ requestId }: ChatRoomProps) {
             onSubmit={handleSend}
             className="border-t border-[#DFD0B8]/10 bg-[#393E46]/95 px-5 py-5 backdrop-blur-xl sm:px-6"
           >
-            <div className="flex gap-3">
+            <div className="flex items-center gap-3">
               <label htmlFor="chat-input" className="sr-only">
                 Message
               </label>

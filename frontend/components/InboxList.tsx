@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { useWeb3 } from "@/context/Web3Context";
 import { useFirebaseAuth } from "@/context/FirebaseAuthContext";
 import { getMailboxContractWrite } from "@/lib/contracts";
 import { decodePreview } from "@/lib/encodePreview";
 import { setNickname, subscribeNicknames } from "@/lib/firebaseContacts";
+import { subscribeDeletedChats } from "@/lib/firebaseDeletedChats";
 import ProofBadge from "./ProofBadge";
 import {
   formatMLBadge,
@@ -82,6 +84,13 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
   // Per-user contact nicknames keyed by lowercase sender address.
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
 
+  // Per-user hidden-chat id set (mirrors the Sidebar's deletedChats list).
+  const [deletedChats, setDeletedChats] = useState<Set<string>>(new Set());
+  const deletedChatsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    deletedChatsRef.current = deletedChats;
+  }, [deletedChats]);
+
   // TEE ML behavior check results keyed by request id.
   const [mlScores, setMlScores] = useState<Record<string, MLBehaviorScore | null>>({});
   const [mlLoadingIds, setMlLoadingIds] = useState<Set<string>>(new Set());
@@ -131,7 +140,13 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
           .filter((r) => r.sender.toLowerCase() !== address.toLowerCase());
         console.log("[InboxList] mapped pending count (after self-filter):", pending.length, "first item:", pending[0] ?? "none");
 
-        setRequests((prev) => (reset ? pending : [...prev, ...pending]));
+        setRequests((prev) => {
+          const existing = new Set(prev.map((r) => r.requestId));
+          const fresh = reset
+            ? pending
+            : pending.filter((r) => !existing.has(r.requestId));
+          return [...(reset ? [] : prev), ...fresh];
+        });
         setHasMore(ids.length === PAGE_SIZE);
         if (!reset) {
           setOffset((prev) => prev + ids.length);
@@ -181,12 +196,20 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
 
         const mapped: ChatRequest[] = ids
           .map((id, i) => mapRequest(id, rawRequests[i]))
-          .filter((r) => r.sender.toLowerCase() !== address.toLowerCase());
+          .filter(
+            (r) =>
+              r.sender.toLowerCase() !== address.toLowerCase() &&
+              !deletedChatsRef.current.has(r.requestId),
+          );
         console.log("[InboxList] mapped receiver count (after self-filter):", mapped.length, "accepted:", mapped.filter((r) => r.accepted).length, "first item:", mapped[0] ?? "none");
 
-        setReceiverRequests((prev) =>
-          reset ? mapped : [...prev, ...mapped],
-        );
+        setReceiverRequests((prev) => {
+          const existing = new Set(prev.map((r) => r.requestId));
+          const fresh = reset
+            ? mapped
+            : mapped.filter((r) => !existing.has(r.requestId));
+          return [...(reset ? [] : prev), ...fresh];
+        });
         setReceiverHasMore(ids.length === PAGE_SIZE);
         if (!reset) {
           setReceiverOffset((prev) => prev + ids.length);
@@ -232,17 +255,37 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
     void loadReceiverRequests(true);
   }, [address, signer, refreshKey, loadRequests, loadReceiverRequests]);
 
-  const chats = useMemo(
-    () => receiverRequests.filter((r) => r.accepted),
-    [receiverRequests],
-  );
+  // Accepted chats: one entry per unique sender, keeping the newest requestId.
+  // Exclude any request id the user has hidden from the Chats tab so the
+  // Sidebar and InboxList stay consistent.
+  const chats = useMemo(() => {
+    const bySender = new Map<string, ChatRequest>();
+    receiverRequests
+      .filter((r) => r.accepted && !deletedChats.has(r.requestId))
+      .forEach((req) => {
+        const sender = req.sender.toLowerCase();
+        const existing = bySender.get(sender);
+        if (!existing || BigInt(req.requestId) > BigInt(existing.requestId)) {
+          bySender.set(sender, req);
+        }
+      });
+    return Array.from(bySender.values()).sort(
+      (a, b) => b.expirationTime - a.expirationTime,
+    );
+  }, [receiverRequests, deletedChats]);
 
+  // History contains only unaccepted, expired requests. Rejected requests are
+  // cleaned up on-chain and will not be returned. Hidden chats are excluded
+  // both when loading and here so real-time deletes are reflected immediately.
   const history = useMemo(
     () =>
       receiverRequests.filter(
-        (r) => !r.accepted && Date.now() / 1000 > r.expirationTime,
+        (r) =>
+          !r.accepted &&
+          Date.now() / 1000 > r.expirationTime &&
+          !deletedChats.has(r.requestId),
       ),
-    [receiverRequests],
+    [receiverRequests, deletedChats],
   );
 
   // Subscribe to the user's entire private nickname address book in real time.
@@ -263,6 +306,25 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
       };
     } catch (err: any) {
       console.error("[InboxList] nickname subscription failed:", err);
+    }
+  }, [user]);
+
+  // Subscribe to the user's hidden-chat id set in real time. This keeps the
+  // Chats and History tabs in sync with the Sidebar's delete action.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    try {
+      const unsubscribe = subscribeDeletedChats(user.uid, (fetched) => {
+        if (!active) return;
+        setDeletedChats(fetched);
+      });
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    } catch (err: any) {
+      console.error("[InboxList] deletedChats subscription failed:", err);
     }
   }, [user]);
 
@@ -421,16 +483,18 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
 
   console.log("[InboxList] render summary: mode=", mode, "pending count=", requests.length, "chats count=", chats.length, "history count=", history.length, "receiverRequests total=", receiverRequests.length, "display count=", displayRequests.length, "loading=", isLoading);
 
-  const emptyCopy: Record<Mode, { icon: string; title: string; body: string }> = {
+  const emptyCopy: Record<Mode, { icon: string; title: string; body: string; cta?: string }> = {
     pending: {
       icon: "🚪",
       title: "Your door is quiet",
-      body: "No pending chat requests right now. Send a knock to start a private conversation.",
+      body: "No pending knocks at the moment. Send one to start a private, encrypted conversation.",
+      cta: "Send a knock",
     },
     chats: {
       icon: "💬",
       title: "No conversations yet",
-      body: "Accept a knock to start chatting. Your active conversations will appear here.",
+      body: "Accept a knock to unlock a chat. Your active conversations will live here.",
+      cta: "Send a knock",
     },
     history: {
       icon: "📜",
@@ -478,21 +542,13 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
       )}
 
       {displayRequests.length === 0 && !isLoading ? (
-        <div className="relative overflow-hidden rounded-3xl border border-[#DFD0B8]/10 bg-[#222831] p-14 text-center shadow-xl shadow-black/20">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#DFD0B8]/25 to-transparent"
-          />
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[#393E46] text-4xl shadow-inner ring-1 ring-[#DFD0B8]/10">
-            {emptyCopy[mode].icon}
-          </div>
-          <h3 className="mb-2 text-xl font-bold tracking-tight text-[#DFD0B8]">
-            {emptyCopy[mode].title}
-          </h3>
-          <p className="mx-auto max-w-sm text-sm leading-relaxed text-[#948979]">
-            {emptyCopy[mode].body}
-          </p>
-        </div>
+        <PremiumEmptyState
+          icon={emptyCopy[mode].icon}
+          title={emptyCopy[mode].title}
+          body={emptyCopy[mode].body}
+          cta={emptyCopy[mode].cta}
+          onCta={() => router.push("/send")}
+        />
       ) : mode === "chats" ? (
         <div className="flex flex-col gap-3">
           {chats.map((req) => {
@@ -804,6 +860,56 @@ export default function InboxList({ refreshKey, initialMode }: InboxListProps) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PremiumEmptyState({
+  icon,
+  title,
+  body,
+  cta,
+  onCta,
+}: {
+  icon: string;
+  title: string;
+  body: string;
+  cta?: string;
+  onCta?: () => void;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-3xl border border-[#DFD0B8]/10 bg-gradient-to-b from-[#222831] to-[#1c222a] p-14 text-center shadow-2xl shadow-black/25">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#DFD0B8]/30 to-transparent"
+      />
+      <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#DFD0B8]/5 blur-3xl" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+        className="relative z-10 flex flex-col items-center"
+      >
+        <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-b from-[#393E46] to-[#31363F] text-5xl shadow-inner ring-1 ring-[#DFD0B8]/10">
+          {icon}
+        </div>
+        <h3 className="mb-2 text-2xl font-bold tracking-tight text-[#DFD0B8]">
+          {title}
+        </h3>
+        <p className="mx-auto max-w-sm text-sm leading-relaxed text-[#948979]">
+          {body}
+        </p>
+        {cta && onCta && (
+          <button
+            type="button"
+            onClick={onCta}
+            className="mt-8 rounded-2xl bg-[#DFD0B8] px-6 py-2.5 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
+          >
+            {cta}
+          </button>
+        )}
+      </motion.div>
     </div>
   );
 }
