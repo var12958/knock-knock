@@ -1,4 +1,4 @@
-// File: C:\Users\Varun\Desktop\__\frontend\app\send\page.tsx
+// File: C:\Users\Varun\Desktop\flare\frontend\app\send\page.tsx
 import * as entry from '../../../../app/send/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

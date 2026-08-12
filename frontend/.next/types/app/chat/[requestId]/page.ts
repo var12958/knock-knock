@@ -1,4 +1,4 @@
-// File: C:\Users\Varun\Desktop\__\frontend\app\chat\[requestId]\page.tsx
+// File: C:\Users\Varun\Desktop\flare\frontend\app\chat\[requestId]\page.tsx
 import * as entry from '../../../../../app/chat/[requestId]/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

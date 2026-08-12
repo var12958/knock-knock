@@ -220,3 +220,11 @@ export function useFirebaseAuth(): FirebaseAuthState {
 }
 
 export { auth };
+
+export async function getFirebaseIdToken(): Promise<string> {
+  if (!auth?.currentUser) {
+    throw new Error("You must be signed in.");
+  }
+
+  return await auth.currentUser.getIdToken();
+}

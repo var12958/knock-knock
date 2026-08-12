@@ -1,20 +1,76 @@
 "use client";
 
-import {
-  getFunctions,
-  httpsCallable,
-  connectFunctionsEmulator,
-} from "firebase/functions";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { firebaseApp } from "./firebase";
+import { auth } from "@/context/FirebaseAuthContext";
+
+/*
+ * Firebase Functions is used ONLY for Twitter verification.
+ *
+ * The other five backend operations are handled by the Render backend.
+ */
 
 const functions = firebaseApp ? getFunctions(firebaseApp) : null;
 
-if (functions && process.env.NODE_ENV === "development") {
-  if (typeof console !== "undefined") {
-    console.log("[Firebase] Connecting Functions emulator at 127.0.0.1:5001");
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/+$/, "");
+
+async function callRender<TInput, TResult>(
+  endpoint: string,
+  input: TInput,
+): Promise<TResult> {
+  if (!BACKEND_URL) {
+    throw new Error("Render backend URL is not configured.");
   }
-  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    throw new Error("You must be signed in.");
+  }
+
+  const token = await currentUser.getIdToken();
+
+  const response = await fetch(
+    `${BACKEND_URL}/api/${endpoint}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  let data: unknown = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const errorData = data as
+      | {
+          message?: string;
+          error?: string;
+        }
+      | null;
+
+    throw new Error(
+      errorData?.message ||
+        errorData?.error ||
+        `Backend request failed (${response.status})`,
+    );
+  }
+
+  return data as TResult;
 }
+
+/* ================================================================ */
+/* Reserve Username                                                 */
+/* ================================================================ */
 
 export interface ReserveUsernameInput {
   username: string;
@@ -30,16 +86,39 @@ export interface ReserveUsernameResult {
 export async function reserveUsernameAndCreateProfile(
   input: ReserveUsernameInput,
 ): Promise<ReserveUsernameResult> {
-  if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    throw new Error("You must be signed in.");
   }
-  const callable = httpsCallable<ReserveUsernameInput, ReserveUsernameResult>(
-    functions,
+
+  /*
+   * Firebase Authentication is the source of truth for email/display name.
+   *
+   * This prevents the Render backend from receiving an undefined email
+   * when the onboarding form only supplies a username.
+   */
+  const request: ReserveUsernameInput = {
+    username: input.username.trim(),
+    email: input.email ?? currentUser.email ?? undefined,
+    displayName:
+      input.displayName ??
+      currentUser.displayName ??
+      undefined,
+  };
+
+  return callRender<
+    ReserveUsernameInput,
+    ReserveUsernameResult
+  >(
     "reserveUsernameAndCreateProfile",
+    request,
   );
-  const response = await callable(input);
-  return response.data;
 }
+
+/* ================================================================ */
+/* Link Wallet                                                      */
+/* ================================================================ */
 
 export interface LinkWalletInput {
   walletAddress: string;
@@ -51,17 +130,21 @@ export interface LinkWalletResult {
   walletAddress: string;
 }
 
-export async function linkWallet(input: LinkWalletInput): Promise<LinkWalletResult> {
-  if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
-  }
-  const callable = httpsCallable<LinkWalletInput, LinkWalletResult>(
-    functions,
+export async function linkWallet(
+  input: LinkWalletInput,
+): Promise<LinkWalletResult> {
+  return callRender<
+    LinkWalletInput,
+    LinkWalletResult
+  >(
     "linkWallet",
+    input,
   );
-  const response = await callable(input);
-  return response.data;
 }
+
+/* ================================================================ */
+/* Publish Chat Request                                             */
+/* ================================================================ */
 
 export interface PublishChatRequestInput {
   txHash: string;
@@ -76,16 +159,18 @@ export interface PublishChatRequestResult {
 export async function publishChatRequest(
   input: PublishChatRequestInput,
 ): Promise<PublishChatRequestResult> {
-  if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
-  }
-  const callable = httpsCallable<PublishChatRequestInput, PublishChatRequestResult>(
-    functions,
+  return callRender<
+    PublishChatRequestInput,
+    PublishChatRequestResult
+  >(
     "publishChatRequest",
+    input,
   );
-  const response = await callable(input);
-  return response.data;
 }
+
+/* ================================================================ */
+/* FCC Onboarding Verification                                      */
+/* ================================================================ */
 
 export interface VerifyOnboardingInput {
   txHash: string;
@@ -100,16 +185,18 @@ export interface VerifyOnboardingResult {
 export async function verifyOnboarding(
   input: VerifyOnboardingInput,
 ): Promise<VerifyOnboardingResult> {
-  if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
-  }
-  const callable = httpsCallable<VerifyOnboardingInput, VerifyOnboardingResult>(
-    functions,
+  return callRender<
+    VerifyOnboardingInput,
+    VerifyOnboardingResult
+  >(
     "verifyFCCOnboarding",
+    input,
   );
-  const response = await callable(input);
-  return response.data;
 }
+
+/* ================================================================ */
+/* Switch Linked Wallet                                             */
+/* ================================================================ */
 
 export interface SwitchLinkedWalletInput {
   walletAddress: string;
@@ -124,24 +211,21 @@ export interface SwitchLinkedWalletResult {
   isOldEnoughWallet: boolean;
 }
 
-/**
- * Switch the wallet linked to an already-verified Firebase profile after the
- * client has run the FCC verification flow for the new address. The server
- * validates ownership via signature and re-verifies the FCC transaction on-chain.
- */
 export async function switchLinkedWallet(
   input: SwitchLinkedWalletInput,
 ): Promise<SwitchLinkedWalletResult> {
-  if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
-  }
-  const callable = httpsCallable<
+  return callRender<
     SwitchLinkedWalletInput,
     SwitchLinkedWalletResult
-  >(functions, "switchLinkedWallet");
-  const response = await callable(input);
-  return response.data;
+  >(
+    "switchLinkedWallet",
+    input,
+  );
 }
+
+/* ================================================================ */
+/* Twitter Verification — Firebase Callable Function ONLY          */
+/* ================================================================ */
 
 export interface VerifyTwitterOnboardingInput {
   twitterHandle: string;
@@ -154,22 +238,24 @@ export interface VerifyTwitterOnboardingResult {
   attestationId: string;
 }
 
-/**
- * Verify a Twitter handle via the Flare Data Connector through a secure Cloud
- * Function. The function performs the FDC attestation server-side and only
- * persists the badge if the attestation confirms a verified account — the
- * client cannot forge the flag (the `twitterByWallet` node is write-false).
- */
 export async function verifyTwitterOnboarding(
   input: VerifyTwitterOnboardingInput,
 ): Promise<VerifyTwitterOnboardingResult> {
   if (!functions) {
-    throw new Error("Firebase Functions is not configured.");
+    throw new Error(
+      "Firebase Functions is not configured.",
+    );
   }
+
   const callable = httpsCallable<
     VerifyTwitterOnboardingInput,
     VerifyTwitterOnboardingResult
-  >(functions, "verifyTwitterOnboarding");
+  >(
+    functions,
+    "verifyTwitterOnboarding",
+  );
+
   const response = await callable(input);
+
   return response.data;
 }

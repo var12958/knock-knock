@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import InboxList from "./InboxList";
 import Sidebar from "./Sidebar";
@@ -31,10 +31,11 @@ function parseGroupId(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export default function Dashboard() {
+function DashboardContent() {
   const router = useRouter();
   const pathname = usePathname() ?? "/";
   const searchParams = useSearchParams();
+
   // Bumped after a knock is sent so the sidebar reloads its lists.
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -48,8 +49,9 @@ export default function Dashboard() {
     searchParams.get("view") === "chats"
       ? "chats"
       : searchParams.get("view") === "history"
-      ? "history"
-      : "inbox";
+        ? "history"
+        : "inbox";
+
   const isTabView = !chatId && !groupId && !isSend;
 
   return (
@@ -65,9 +67,10 @@ export default function Dashboard() {
               {activeTab === "history"
                 ? "History"
                 : activeTab === "chats"
-                ? "Chats"
-                : "Inbox"}
+                  ? "Chats"
+                  : "Inbox"}
             </h2>
+
             <button
               type="button"
               onClick={() => router.push("/send")}
@@ -85,7 +88,9 @@ export default function Dashboard() {
             <GroupChatPlaceholder groupId={groupId} />
           ) : isSend ? (
             <div className="h-full overflow-y-auto p-6 sm:p-8">
-              <SendRequestForm onMessageSent={() => setRefreshKey((k) => k + 1)} />
+              <SendRequestForm
+                onMessageSent={() => setRefreshKey((k) => k + 1)}
+              />
             </div>
           ) : chatId === null && /^\/chat\//.test(pathname) ? (
             <InvalidChatState />
@@ -104,15 +109,25 @@ export default function Dashboard() {
   );
 }
 
+export default function Dashboard() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
 function WelcomeState() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-10 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-4xl shadow-inner ring-1 ring-[#DFD0B8]/10">
         💬
       </div>
+
       <h3 className="text-xl font-bold tracking-tight text-[#DFD0B8]">
         Select a conversation
       </h3>
+
       <p className="max-w-sm text-sm leading-relaxed text-[#948979]">
         Pick a chat from the sidebar to start messaging, or tap "New Chat" to
         send a private knock on Flare.
@@ -127,9 +142,11 @@ function InvalidChatState() {
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-rose-500/20 bg-rose-500/10 text-4xl">
         ⚠️
       </div>
+
       <h3 className="text-xl font-bold tracking-tight text-[#DFD0B8]">
         Invalid chat request ID
       </h3>
+
       <p className="max-w-sm text-sm leading-relaxed text-[#948979]">
         That chat request ID could not be found. Pick a conversation from the
         sidebar.
@@ -149,13 +166,15 @@ function GroupChatPlaceholder({ groupId }: { groupId: string }) {
       <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[#DFD0B8]/10 bg-[#393E46] text-4xl shadow-inner ring-1 ring-[#DFD0B8]/10">
         👥
       </div>
+
       <h3 className="text-xl font-bold tracking-tight text-[#DFD0B8]">
         Group chat coming soon
       </h3>
+
       <p className="max-w-sm break-all text-sm leading-relaxed text-[#948979]">
-        The multi-party chat room for group <span className="font-mono">{groupId}</span>{" "}
-        will be available soon. Your individual knocks to each member are
-        already on-chain.
+        The multi-party chat room for group{" "}
+        <span className="font-mono">{groupId}</span> will be available soon.
+        Your individual knocks to each member are already on-chain.
       </p>
     </div>
   );

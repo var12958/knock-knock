@@ -1,4 +1,4 @@
-// File: C:\Users\Varun\Desktop\__\frontend\app\onboard\page.tsx
+// File: C:\Users\Varun\Desktop\flare\frontend\app\onboard\page.tsx
 import * as entry from '../../../../app/onboard/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
