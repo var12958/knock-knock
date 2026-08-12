@@ -5,7 +5,8 @@
  *      writing the resulting verified status to a user's profile.
  */
 
-import { initializeApp, getApps } from "firebase-admin/app";
+import { cert, initializeApp, getApps } from "firebase-admin/app";
+import fs from "node:fs";
 import { getDatabase } from "firebase-admin/database";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { defineString } from "firebase-functions/params";
@@ -13,8 +14,28 @@ import { ethers } from "ethers";
 import { MAILBOX_ABI } from "./mailboxAbi.js";
 
 // Initialize Firebase Admin if it has not already been initialized by the runtime.
+// Initialize Firebase Admin if it has not already been initialized.
 if (getApps().length === 0) {
-  initializeApp();
+  const serviceAccountPath = "/etc/secrets/firebase-service-account.json";
+
+  const databaseUrl =
+    process.env.FIREBASE_DATABASE_URL ||
+    "https://knock-knock-3d768-default-rtdb.firebaseio.com";
+
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(
+      fs.readFileSync(serviceAccountPath, "utf8"),
+    );
+
+    initializeApp({
+      credential: cert(serviceAccount),
+      databaseURL: databaseUrl,
+    });
+  } else {
+    initializeApp({
+      databaseURL: databaseUrl,
+    });
+  }
 }
 
 const db = getDatabase();
