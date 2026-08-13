@@ -6,6 +6,7 @@ import InboxList from "./InboxList";
 import Sidebar from "./Sidebar";
 import ChatRoom from "./ChatRoom";
 import SendRequestForm from "./SendRequestForm";
+import DashboardHeader from "./DashboardHeader";
 
 /**
  * Parse a `/chat/[requestId]` path into its request id, validating that it is a
@@ -53,6 +54,7 @@ function DashboardContent() {
         : "inbox";
 
   const isTabView = !chatId && !groupId && !isSend;
+  const shouldShowHeader = !chatId && !groupId;
 
   return (
     <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-3xl border border-[#DFD0B8]/10 bg-[#222831] shadow-2xl shadow-black/25">
@@ -61,24 +63,8 @@ function DashboardContent() {
       </div>
 
       <div className="flex flex-1 flex-col overflow-hidden bg-[#222831]">
-        {isTabView && (
-          <div className="flex items-center justify-between border-b border-[#DFD0B8]/10 px-6 py-4">
-            <h2 className="text-lg font-bold tracking-tight text-[#DFD0B8]">
-              {activeTab === "history"
-                ? "History"
-                : activeTab === "chats"
-                  ? "Chats"
-                  : "Inbox"}
-            </h2>
-
-            <button
-              type="button"
-              onClick={() => router.push("/send")}
-              className="rounded-xl bg-[#DFD0B8] px-5 py-2 text-sm font-bold text-[#222831] shadow-lg shadow-[#DFD0B8]/15 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#DFD0B8]/90 hover:shadow-[#DFD0B8]/25"
-            >
-              + New Chat
-            </button>
-          </div>
+        {shouldShowHeader && (
+          <DashboardHeader activeTab={activeTab} isOnSendPage={isSend} />
         )}
 
         <div className="flex-1 overflow-hidden">
