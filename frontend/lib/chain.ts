@@ -13,7 +13,11 @@ export const COSTON2_CHAIN_ID = 114;
  * with a warm tone instead of a harsh RPC failure dump.
  */
 export const COSTON2_ADD_PROMPT =
-  "Please add the Flare Coston2 Testnet to your wallet to continue.";
+  "The required network is not present in your wallet.\n\n" +
+  "Go to MetaMask → Networks → Add network manually, then add Flare Coston2 using:\n\n" +
+  "RPC: https://coston2-api.flare.network/ext/C/rpc\n" +
+  "Chain ID: 114\n" +
+  "Currency: C2FLR";
 
 export const COSTON2_CONFIG = {
   chainId: "0x" + COSTON2_CHAIN_ID.toString(16),

@@ -282,11 +282,12 @@ function Web3HeaderContent() {
 
       {error && (
         <div
-          className={`mx-auto mt-3 max-w-7xl rounded-xl border px-4 py-2 text-sm ring-1 ${
+          className={`mx-auto mt-3 max-w-7xl rounded-xl border px-4 py-2 text-sm leading-relaxed ring-1 ${
             error === COSTON2_ADD_PROMPT
               ? "border-amber-500/25 bg-amber-500/10 text-amber-200 ring-amber-500/10"
               : "border-rose-500/20 bg-rose-500/10 text-rose-300 ring-rose-500/10"
           }`}
+          style={{ whiteSpace: error === COSTON2_ADD_PROMPT ? "pre-line" : undefined }}
         >
           {error}
         </div>

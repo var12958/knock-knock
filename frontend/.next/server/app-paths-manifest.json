@@ -1,6 +1,10 @@
 {
-  "/page": "app/page.js",
-  "/onboard/page": "app/onboard/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/chat/group/[groupId]/page": "app/chat/group/[groupId]/page.js",
+  "/chat/[requestId]/page": "app/chat/[requestId]/page.js",
   "/send/page": "app/send/page.js",
-  "/chat/[requestId]/page": "app/chat/[requestId]/page.js"
+  "/landing/page": "app/landing/page.js",
+  "/inbox/page": "app/inbox/page.js",
+  "/onboard/page": "app/onboard/page.js",
+  "/page": "app/page.js"
 }
